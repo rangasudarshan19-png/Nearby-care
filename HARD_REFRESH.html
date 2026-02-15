@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Clear Cache & Refresh</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+            text-align: center;
+            max-width: 500px;
+        }
+        h1 {
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+        .instruction {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #667eea;
+        }
+        .key {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: bold;
+            margin: 0 4px;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+        }
+        .status {
+            margin-top: 20px;
+            padding: 12px;
+            border-radius: 6px;
+            display: none;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔄 Clear Browser Cache</h1>
+        <div class="instruction">
+            <h3>Windows Users:</h3>
+            <p>Press <span class="key">Ctrl</span> + <span class="key">Shift</span> + <span class="key">R</span></p>
+            <p>OR</p>
+            <p>Press <span class="key">Ctrl</span> + <span class="key">F5</span></p>
+        </div>
+        <div class="instruction">
+            <h3>Mac Users:</h3>
+            <p>Press <span class="key">Cmd</span> + <span class="key">Shift</span> + <span class="key">R</span></p>
+        </div>
+        <button onclick="clearAndRefresh()">Clear Cache & Reload App</button>
+        <div class="status" id="status"></div>
+    </div>
+
+    <script>
+        function clearAndRefresh() {
+            // Clear localStorage
+            localStorage.clear();
+            
+            // Clear sessionStorage
+            sessionStorage.clear();
+            
+            // Show success message
+            const status = document.getElementById('status');
+            status.className = 'status success';
+            status.textContent = '✅ Cache cleared! Redirecting to app...';
+            
+            // Redirect to app after 1 second
+            setTimeout(() => {
+                window.location.href = 'http://localhost:3000';
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
