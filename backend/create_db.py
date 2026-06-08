@@ -1,16 +1,13 @@
-import os
-from app import app, db
+from app import app, db, run_db_maintenance
 
-# Delete old database if it exists
-db_path = 'nearby_care.db'
-if os.path.exists(db_path):
-    os.remove(db_path)
-    print("Deleted old database")
-
-# Create all tables using SQLAlchemy
+# Create any missing tables using SQLAlchemy. This must not delete existing app data.
 with app.app_context():
-    db.create_all()
-    print("Database created successfully!")
+    result = run_db_maintenance()
+    print("Database tables are ready.")
+    if not result['ok']:
+        print(f"Missing tables: {result['missing_tables']}")
+        print(f"Missing columns: {result['missing_columns']}")
+        raise SystemExit(1)
     
     # Show created tables
     from sqlalchemy import inspect

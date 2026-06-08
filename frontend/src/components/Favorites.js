@@ -1,55 +1,42 @@
 import React, { useState, useEffect } from 'react';
-import { API_URL } from '../config';
+import { apiDelete, apiGet } from '../utils/apiClient';
+import { Alert, EmptyState, Spinner } from './ui';
 
 function Favorites() {
   const [favorites, setFavorites] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     fetchFavorites();
   }, []);
 
   const fetchFavorites = async () => {
-    const token = localStorage.getItem('token');
+    setError('');
     try {
-      const response = await fetch(`${API_URL}/api/favorites`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      const data = await response.json();
+      const data = await apiGet('/api/favorites');
       setFavorites(data);
     } catch (error) {
-      console.error('Error fetching favorites:', error);
+      setError(error.message || 'Failed to load favorites.');
+      setFavorites([]);
     } finally {
       setLoading(false);
     }
   };
 
   const handleRemove = async (id) => {
-    const token = localStorage.getItem('token');
+    setError('');
     try {
-      const response = await fetch(`${API_URL}/api/favorites/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      if (response.ok) {
-        setFavorites(favorites.filter(fav => fav.id !== id));
-      }
+      await apiDelete(`/api/favorites/${id}`);
+      setFavorites(favorites.filter(fav => fav.id !== id));
     } catch (error) {
-      console.error('Error removing favorite:', error);
+      setError(error.message || 'Failed to remove favorite.');
     }
   };
 
   if (loading) {
     return (
-      <div className="loading">
-        <div className="spinner"></div>
-        <p>Loading favorites...</p>
-      </div>
+      <Spinner label="Loading favorites..." />
     );
   }
 
@@ -59,11 +46,13 @@ function Favorites() {
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
         My Favorites ({favorites.length})
       </h2>
+      <Alert type="error">{error}</Alert>
       
       {favorites.length === 0 ? (
-        <div className="info">
-          <p>No favorite hospitals yet. Add some from your search results!</p>
-        </div>
+        <EmptyState
+          title="No favorite hospitals yet"
+          description="Add hospitals from your search results and they will appear here."
+        />
       ) : (
         favorites.map((favorite) => (
           <div key={favorite.id} className="hospital-card">

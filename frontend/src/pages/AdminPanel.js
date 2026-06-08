@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import '../styles/AdminPanel.css';
+import { clearAuthSession, getAuthToken, getStoredUser } from '../utils/authStorage';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
@@ -19,6 +20,26 @@ const AdminDashboard = () => {
   const [appointments, setAppointments] = useState([]);
   const [logs, setLogs] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
+  const [hospitalSearch, setHospitalSearch] = useState({ query: '', radius: 5 });
+  const [hospitalResults, setHospitalResults] = useState([]);
+  const [hospitalSearchLoading, setHospitalSearchLoading] = useState(false);
+  const [selectedHospital, setSelectedHospital] = useState(null);
+  const [adminDoctors, setAdminDoctors] = useState([]);
+  const [doctorSearch, setDoctorSearch] = useState('');
+  const [doctorsLoading, setDoctorsLoading] = useState(false);
+  const [doctorForm, setDoctorForm] = useState({
+    name: '',
+    specialty: '',
+    qualifications: '',
+    experience_years: '',
+    consultation_fee: '',
+    email: '',
+    phone: '',
+    bio: '',
+    available_days: [],
+    available_hours: '09:00-17:00',
+    rating: ''
+  });
 
   const [usersPage, setUsersPage] = useState(1);
   const [appointmentsPage, setAppointmentsPage] = useState(1);
@@ -29,8 +50,8 @@ const AdminDashboard = () => {
   const [selectedItem, setSelectedItem] = useState(null);
 
   useEffect(() => {
-    const userData = localStorage.getItem('user');
-    if (userData) setCurrentUser(JSON.parse(userData));
+    const userData = getStoredUser();
+    if (userData) setCurrentUser(userData);
   }, []);
 
   useEffect(() => {
@@ -44,14 +65,15 @@ const AdminDashboard = () => {
     if (activeTab === 'appointments') fetchAppointments();
     if (activeTab === 'logs') fetchLogs();
     if (activeTab === 'announcements') fetchAnnouncements();
+    if (activeTab === 'doctors') fetchAdminDoctors();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, usersPage, appointmentsPage, logsPage]);
+  }, [activeTab, usersPage, appointmentsPage, logsPage, doctorSearch]);
 
-  const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+  const auth = () => ({ headers: { Authorization: `Bearer ${getAuthToken()}` } });
 
   const handleAuthError = (err) => {
     if (err.response?.status === 401 || err.response?.status === 403) {
-      localStorage.clear();
+      clearAuthSession({ broadcast: true });
       navigate('/login', { replace: true });
       return true;
     }
@@ -154,10 +176,135 @@ const AdminDashboard = () => {
     } catch { showMsg(setError, 'Failed to send announcement'); }
   };
 
+  const fetchAdminDoctors = async () => {
+    if (isLoggingOut) return;
+    setDoctorsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (doctorSearch.trim()) params.set('search', doctorSearch.trim());
+      const query = params.toString();
+      const res = await axios.get(`${API}/api/admin/doctors${query ? `?${query}` : ''}`, auth());
+      setAdminDoctors(res.data.doctors || []);
+    } catch (err) {
+      if (!handleAuthError(err)) showMsg(setError, err.response?.data?.error || 'Failed to fetch doctors');
+    } finally {
+      setDoctorsLoading(false);
+    }
+  };
+
+  const resetDoctorForm = () => {
+    setDoctorForm({
+      name: '',
+      specialty: '',
+      qualifications: '',
+      experience_years: '',
+      consultation_fee: '',
+      email: '',
+      phone: '',
+      bio: '',
+      available_days: [],
+      available_hours: '09:00-17:00',
+      rating: ''
+    });
+  };
+
+  const searchHospitalsForDoctors = async (payload) => {
+    setHospitalSearchLoading(true);
+    setError('');
+    try {
+      const res = await axios.post(`${API}/api/search-hospitals-osm`, {
+        radius: Number(hospitalSearch.radius) || 5,
+        hospitalType: 'hospital',
+        ...payload
+      }, auth());
+      setHospitalResults(res.data.hospitals || []);
+      setSelectedHospital(null);
+      if ((res.data.hospitals || []).length === 0) {
+        showMsg(setError, 'No hospitals found for this location');
+      }
+    } catch (err) {
+      if (!handleAuthError(err)) showMsg(setError, err.response?.data?.error || 'Failed to search hospitals');
+    } finally {
+      setHospitalSearchLoading(false);
+    }
+  };
+
+  const handleHospitalSearch = async (e) => {
+    e.preventDefault();
+    if (!hospitalSearch.query.trim()) {
+      showMsg(setError, 'Enter a location to search hospitals');
+      return;
+    }
+    searchHospitalsForDoctors({ query: hospitalSearch.query.trim() });
+  };
+
+  const useAdminLocation = () => {
+    if (!navigator.geolocation) {
+      showMsg(setError, 'Location is not supported by this browser');
+      return;
+    }
+    setHospitalSearchLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        searchHospitalsForDoctors({
+          lat: position.coords.latitude,
+          lon: position.coords.longitude
+        });
+      },
+      () => {
+        setHospitalSearchLoading(false);
+        showMsg(setError, 'Unable to access current location');
+      }
+    );
+  };
+
+  const toggleDoctorDay = (day) => {
+    setDoctorForm(prev => ({
+      ...prev,
+      available_days: prev.available_days.includes(day)
+        ? prev.available_days.filter(item => item !== day)
+        : [...prev.available_days, day]
+    }));
+  };
+
+  const addDoctor = async (e) => {
+    e.preventDefault();
+    if (!selectedHospital?.id) {
+      showMsg(setError, 'Select a hospital before adding doctor details');
+      return;
+    }
+
+    try {
+      await axios.post(`${API}/api/admin/doctors`, {
+        ...doctorForm,
+        hospital_id: selectedHospital.id?.toString(),
+        hospital_name: selectedHospital.name
+      }, auth());
+      showMsg(setSuccess, 'Doctor added successfully');
+      resetDoctorForm();
+      fetchAdminDoctors();
+    } catch (err) {
+      if (!handleAuthError(err)) showMsg(setError, err.response?.data?.error || 'Failed to add doctor');
+    }
+  };
+
+  const deleteDoctor = async (doctor) => {
+    if (!window.confirm(`Delete ${doctor.name}? Future scheduled appointments for this doctor will be cancelled.`)) return;
+    try {
+      const res = await axios.delete(`${API}/api/admin/doctors/${doctor.id}`, auth());
+      const cancelled = res.data.cancelled_appointments || 0;
+      showMsg(setSuccess, cancelled ? `Doctor deleted. ${cancelled} future appointment(s) cancelled.` : 'Doctor deleted successfully');
+      fetchAdminDoctors();
+      fetchAdminStats();
+    } catch (err) {
+      if (!handleAuthError(err)) showMsg(setError, err.response?.data?.error || 'Failed to delete doctor');
+    }
+  };
+
   const handleLogout = () => {
     setIsLoggingOut(true);
     setLoading(false);
-    localStorage.clear();
+    clearAuthSession({ broadcast: true });
     window.location.href = '/login';
   };
 
@@ -174,6 +321,7 @@ const AdminDashboard = () => {
     { id: 'overview', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>, label: 'Dashboard' },
     { id: 'users', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>, label: 'Users' },
     { id: 'appointments', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>, label: 'Appointments' },
+    { id: 'doctors', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 2v4"/><path d="M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M9 14h6"/><path d="M12 11v6"/></svg>, label: 'Doctors' },
     { id: 'announcements', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>, label: 'Announcements' },
     { id: 'logs', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>, label: 'System Logs' },
   ];
@@ -227,6 +375,7 @@ const AdminDashboard = () => {
           {activeTab === 'overview' && 'Dashboard Overview'}
           {activeTab === 'users' && 'User Management'}
           {activeTab === 'appointments' && 'Appointment Management'}
+          {activeTab === 'doctors' && 'Hospital Doctors'}
           {activeTab === 'announcements' && 'Announcements'}
           {activeTab === 'logs' && 'System Logs'}
         </h1>
@@ -356,7 +505,7 @@ const AdminDashboard = () => {
                           <td>{u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}</td>
                           <td>
                             <span className={`admin-badge ${u.is_verified ? 'verified' : 'unverified'}`}>
-                              {u.is_verified ? '✓ Verified' : '✗ Unverified'}
+                              {u.is_verified ? 'Verified' : 'Unverified'}
                             </span>
                           </td>
                           <td>
@@ -395,7 +544,7 @@ const AdminDashboard = () => {
                 <table className="admin-table">
                   <thead>
                     <tr>
-                      <th>ID</th><th>User</th><th>Hospital</th><th>Date</th><th>Time</th><th>Status</th><th>Actions</th>
+                      <th>ID</th><th>User</th><th>Doctor</th><th>Hospital</th><th>Date</th><th>Time</th><th>Status</th><th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -403,6 +552,7 @@ const AdminDashboard = () => {
                       <tr key={apt.id}>
                         <td>{apt.id}</td>
                         <td>{apt.user_email || `User #${apt.user_id}`}</td>
+                        <td>{apt.doctor_name || 'Deleted doctor'}</td>
                         <td>{apt.hospital_name}</td>
                         <td>{new Date(apt.appointment_date).toLocaleDateString()}</td>
                         <td>{apt.appointment_time}</td>
@@ -444,6 +594,260 @@ const AdminDashboard = () => {
                 <button className="btn-admin primary" onClick={() => setAppointmentsPage(Math.max(1, appointmentsPage - 1))} disabled={appointmentsPage === 1}>Previous</button>
                 <span className="page-info">Page {appointmentsPage}</span>
                 <button className="btn-admin primary" onClick={() => setAppointmentsPage(appointmentsPage + 1)} disabled={appointments.length < 10}>Next</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Doctors Tab */}
+        {activeTab === 'doctors' && (
+          <div className="admin-doctor-grid">
+            <div className="data-card">
+              <div className="data-card-header"><h3>Locate Hospitals</h3></div>
+              <div className="data-card-body admin-panel-pad">
+                <form onSubmit={handleHospitalSearch} className="admin-form">
+                  <div className="admin-form-grid">
+                    <div className="form-group">
+                      <label>Location</label>
+                      <input
+                        type="text"
+                        value={hospitalSearch.query}
+                        onChange={(e) => setHospitalSearch({ ...hospitalSearch, query: e.target.value })}
+                        placeholder="City, area, or hospital location"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>Radius</label>
+                      <select
+                        value={hospitalSearch.radius}
+                        onChange={(e) => setHospitalSearch({ ...hospitalSearch, radius: e.target.value })}
+                      >
+                        <option value="2">2 km</option>
+                        <option value="5">5 km</option>
+                        <option value="10">10 km</option>
+                        <option value="20">20 km</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="admin-inline-actions">
+                    <button type="submit" className="btn-admin primary" disabled={hospitalSearchLoading}>
+                      {hospitalSearchLoading ? 'Searching...' : 'Search Hospitals'}
+                    </button>
+                    <button type="button" className="btn-admin secondary" onClick={useAdminLocation} disabled={hospitalSearchLoading}>
+                      Use My Location
+                    </button>
+                  </div>
+                </form>
+
+                <div className="admin-hospital-results">
+                  {hospitalResults.length === 0 ? (
+                    <p className="empty-state">Search hospitals to add doctors for a selected facility.</p>
+                  ) : hospitalResults.map(hospital => (
+                    <button
+                      type="button"
+                      key={`${hospital.id}-${hospital.latitude}-${hospital.longitude}`}
+                      className={`admin-hospital-option ${selectedHospital?.id === hospital.id ? 'selected' : ''}`}
+                      onClick={() => setSelectedHospital(hospital)}
+                    >
+                      <strong>{hospital.name}</strong>
+                      <span>{hospital.address}</span>
+                      {hospital.distance !== undefined && <small>{Number(hospital.distance).toFixed(2)} km away</small>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="data-card">
+              <div className="data-card-header">
+                <h3>{selectedHospital ? `Add Doctor: ${selectedHospital.name}` : 'Add Doctor Details'}</h3>
+              </div>
+              <div className="data-card-body admin-panel-pad">
+                {!selectedHospital ? (
+                  <p className="empty-state">Select a hospital from the search results first.</p>
+                ) : (
+                  <form onSubmit={addDoctor} className="admin-form">
+                    <div className="admin-form-grid">
+                      <div className="form-group">
+                        <label>Doctor Name</label>
+                        <input
+                          type="text"
+                          value={doctorForm.name}
+                          onChange={(e) => setDoctorForm({ ...doctorForm, name: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Specialty</label>
+                        <input
+                          type="text"
+                          value={doctorForm.specialty}
+                          onChange={(e) => setDoctorForm({ ...doctorForm, specialty: e.target.value })}
+                          placeholder="Cardiology, Dental, Pediatrics"
+                          required
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Qualifications</label>
+                        <input
+                          type="text"
+                          value={doctorForm.qualifications}
+                          onChange={(e) => setDoctorForm({ ...doctorForm, qualifications: e.target.value })}
+                          placeholder="MBBS, MD"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Experience</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={doctorForm.experience_years}
+                          onChange={(e) => setDoctorForm({ ...doctorForm, experience_years: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Consultation Fee</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={doctorForm.consultation_fee}
+                          onChange={(e) => setDoctorForm({ ...doctorForm, consultation_fee: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Rating</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="5"
+                          step="0.1"
+                          value={doctorForm.rating}
+                          onChange={(e) => setDoctorForm({ ...doctorForm, rating: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Email</label>
+                        <input
+                          type="email"
+                          value={doctorForm.email}
+                          onChange={(e) => setDoctorForm({ ...doctorForm, email: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Phone</label>
+                        <input
+                          type="tel"
+                          value={doctorForm.phone}
+                          onChange={(e) => setDoctorForm({ ...doctorForm, phone: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Available Hours</label>
+                        <input
+                          type="text"
+                          value={doctorForm.available_hours}
+                          onChange={(e) => setDoctorForm({ ...doctorForm, available_hours: e.target.value })}
+                          placeholder="09:00-17:00"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Available Days</label>
+                      <div className="admin-day-picker">
+                        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
+                          <button
+                            key={day}
+                            type="button"
+                            className={doctorForm.available_days.includes(day) ? 'selected' : ''}
+                            onClick={() => toggleDoctorDay(day)}
+                          >
+                            {day}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Bio</label>
+                      <textarea
+                        value={doctorForm.bio}
+                        onChange={(e) => setDoctorForm({ ...doctorForm, bio: e.target.value })}
+                        rows="4"
+                      />
+                    </div>
+
+                    <button type="submit" className="btn-admin success">Add Doctor</button>
+                  </form>
+                )}
+              </div>
+            </div>
+
+            <div className="data-card admin-doctor-management">
+              <div className="data-card-header admin-card-header-row">
+                <h3>Existing Doctors</h3>
+                <form
+                  className="admin-table-search"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    fetchAdminDoctors();
+                  }}
+                >
+                  <input
+                    type="search"
+                    value={doctorSearch}
+                    onChange={(e) => setDoctorSearch(e.target.value)}
+                    placeholder="Search doctor, specialty, or hospital"
+                    aria-label="Search doctors"
+                  />
+                  <button type="submit" className="btn-admin secondary">Search</button>
+                </form>
+              </div>
+              <div className="data-card-body">
+                {doctorsLoading ? (
+                  <p className="empty-state">Loading doctors...</p>
+                ) : adminDoctors.length === 0 ? (
+                  <p className="empty-state">No doctors found.</p>
+                ) : (
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th>Doctor</th>
+                        <th>Specialty</th>
+                        <th>Hospital</th>
+                        <th>Fee</th>
+                        <th>Rating</th>
+                        <th>Availability</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminDoctors.map(doctor => (
+                        <tr key={doctor.id}>
+                          <td>
+                            <strong>{doctor.name}</strong>
+                            <span className="admin-muted-line">{doctor.qualifications || 'No qualifications added'}</span>
+                          </td>
+                          <td>{doctor.specialty}</td>
+                          <td>
+                            <strong>{doctor.hospital_name}</strong>
+                            <span className="admin-muted-line">ID: {doctor.hospital_id}</span>
+                          </td>
+                          <td>{doctor.consultation_fee ? `Rs. ${Number(doctor.consultation_fee).toFixed(0)}` : 'Not set'}</td>
+                          <td>{doctor.rating ? Number(doctor.rating).toFixed(1) : 'Not set'}</td>
+                          <td>
+                            <span>{(doctor.available_days || []).join(', ') || 'Days not set'}</span>
+                            <span className="admin-muted-line">{doctor.available_hours || 'Hours not set'}</span>
+                          </td>
+                          <td>
+                            <button className="btn-admin danger" onClick={() => deleteDoctor(doctor)}>Delete</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           </div>

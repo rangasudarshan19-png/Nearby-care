@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { API_URL } from '../config';
+import { validatePassword, PASSWORD_RULE_MESSAGE } from '../utils/passwordValidation';
+import { clearAuthSession, getAuthToken } from '../utils/authStorage';
 import '../styles/Dashboard.css';
 
 function UserProfile() {
@@ -37,7 +39,7 @@ function UserProfile() {
 
   const fetchUserData = async () => {
     try {
-      const token = localStorage.getItem('token');
+      const token = getAuthToken();
       const response = await axios.get(`${API_URL}/api/user/profile`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -58,6 +60,9 @@ function UserProfile() {
     } catch (error) {
       console.error('Error fetching user data:', error);
       console.error('Error response:', error.response?.data);
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        clearAuthSession({ broadcast: true });
+      }
       setMessage('Failed to load profile');
       setLoading(false);
     }
@@ -71,7 +76,7 @@ function UserProfile() {
     }
 
     try {
-      const token = localStorage.getItem('token');
+      const token = getAuthToken();
       await axios.put(`${API_URL}/api/user/update-name`, 
         { name: newName },
         { headers: { Authorization: `Bearer ${token}` }}
@@ -79,7 +84,7 @@ function UserProfile() {
       
       setUser({ ...user, name: newName });
       setEditingName(false);
-      setMessage('✓ Name updated successfully!');
+      setMessage('Name updated successfully.');
       setTimeout(() => setMessage(null), 3000);
     } catch (error) {
       console.error('Error updating name:', error);
@@ -95,14 +100,14 @@ function UserProfile() {
 
     setOtpLoading(true);
     try {
-      const token = localStorage.getItem('token');
+      const token = getAuthToken();
       await axios.post(`${API_URL}/api/user/send-email-otp`, 
         { new_email: newEmail },
         { headers: { Authorization: `Bearer ${token}` }}
       );
       
       setOtpSent(true);
-      setMessage('✓ OTP sent to your new email address!');
+      setMessage('OTP sent to your new email address.');
       setTimeout(() => setMessage(null), 3000);
     } catch (error) {
       console.error('Error sending OTP:', error);
@@ -120,7 +125,7 @@ function UserProfile() {
     }
 
     try {
-      const token = localStorage.getItem('token');
+      const token = getAuthToken();
       await axios.post(`${API_URL}/api/user/verify-email-otp`, 
         { new_email: newEmail, otp: emailOtp },
         { headers: { Authorization: `Bearer ${token}` }}
@@ -131,7 +136,7 @@ function UserProfile() {
       setOtpSent(false);
       setEmailOtp('');
       setNewEmail('');
-      setMessage('✓ Email updated successfully!');
+      setMessage('Email updated successfully.');
       setTimeout(() => setMessage(null), 3000);
     } catch (error) {
       console.error('Error verifying OTP:', error);
@@ -152,13 +157,13 @@ function UserProfile() {
       return;
     }
     
-    if (passwordData.newPassword.length < 6) {
-      setMessage('New password must be at least 6 characters');
+    if (!validatePassword(passwordData.newPassword)) {
+      setMessage(PASSWORD_RULE_MESSAGE);
       return;
     }
 
     try {
-      const token = localStorage.getItem('token');
+      const token = getAuthToken();
       await axios.post(`${API_URL}/api/user/change-password`, 
         { 
           current_password: passwordData.currentPassword,
@@ -169,7 +174,7 @@ function UserProfile() {
       
       setChangingPassword(false);
       setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
-      setMessage('✓ Password changed successfully!');
+      setMessage('Password changed successfully.');
       setTimeout(() => setMessage(null), 3000);
     } catch (error) {
       console.error('Error changing password:', error);
@@ -188,12 +193,12 @@ function UserProfile() {
     }
 
     try {
-      const token = localStorage.getItem('token');
+      const token = getAuthToken();
       await axios.delete(`${API_URL}/api/user/delete-account`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       
-      localStorage.removeItem('token');
+      clearAuthSession({ broadcast: true });
       window.location.href = '/';
     } catch (error) {
       console.error('Error deleting account:', error);
@@ -221,14 +226,14 @@ function UserProfile() {
         {/* Name Section */}
         <div className="profile-item">
           <div className="profile-item-header">
-            <h3>📝 Name</h3>
+            <h3>Name</h3>
             {!editingName ? (
               <button onClick={() => setEditingName(true)} className="btn-edit-small">
-                ✏️ Edit
+                Edit
               </button>
             ) : (
               <button onClick={() => { setEditingName(false); setNewName(user.name); }} className="btn-cancel-small">
-                ✖️ Cancel
+                Cancel
               </button>
             )}
           </div>
@@ -252,14 +257,14 @@ function UserProfile() {
         {/* Email Section */}
         <div className="profile-item">
           <div className="profile-item-header">
-            <h3>📧 Email</h3>
+            <h3>Email</h3>
             {!editingEmail ? (
               <button onClick={() => setEditingEmail(true)} className="btn-edit-small">
-                ✏️ Change
+                Change
               </button>
             ) : (
               <button onClick={() => { setEditingEmail(false); setOtpSent(false); setEmailOtp(''); setNewEmail(''); }} className="btn-cancel-small">
-                ✖️ Cancel
+                Cancel
               </button>
             )}
           </div>
@@ -294,7 +299,7 @@ function UserProfile() {
                 className="form-input"
                 maxLength="6"
               />
-              <button type="submit" className="btn-save-small">✓ Verify</button>
+              <button type="submit" className="btn-save-small">Verify</button>
             </form>
           )}
         </div>
@@ -302,14 +307,14 @@ function UserProfile() {
         {/* Password Section */}
         <div className="profile-item">
           <div className="profile-item-header">
-            <h3>🔒 Password</h3>
+            <h3>Password</h3>
             {!changingPassword ? (
               <button onClick={() => setChangingPassword(true)} className="btn-edit-small">
-                ✏️ Change
+                Change
               </button>
             ) : (
               <button onClick={() => { setChangingPassword(false); setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' }); }} className="btn-cancel-small">
-                ✖️ Cancel
+                Cancel
               </button>
             )}
           </div>
@@ -334,9 +339,10 @@ function UserProfile() {
                   type="password"
                   value={passwordData.newPassword}
                   onChange={(e) => setPasswordData({...passwordData, newPassword: e.target.value})}
-                  placeholder="Enter new password (min 6 characters)"
+                  placeholder="Use a strong password"
                   className="form-input"
                 />
+                <small>{PASSWORD_RULE_MESSAGE}</small>
               </div>
               <div className="form-group">
                 <label>Confirm New Password</label>
@@ -348,7 +354,7 @@ function UserProfile() {
                   className="form-input"
                 />
               </div>
-              <button type="submit" className="btn-save-small">🔒 Change Password</button>
+              <button type="submit" className="btn-save-small">Change Password</button>
             </form>
           )}
         </div>
@@ -357,7 +363,7 @@ function UserProfile() {
       {/* Account Deletion */}
       <div className="profile-section" style={{ borderColor: '#dc3545', marginTop: '30px' }}>
         <div className="section-header">
-          <h2>🗑️ Delete Account</h2>
+          <h2>Delete Account</h2>
         </div>
         
         {!deletingAccount ? (
@@ -372,7 +378,7 @@ function UserProfile() {
         ) : (
           <div className="delete-account-form">
             <p className="warning-text">
-              ⚠️ This will permanently delete your account and all associated data. This action cannot be undone!
+              This will permanently delete your account and all associated data. This action cannot be undone.
             </p>
             <div className="form-group">
               <label>Type <strong>DELETE</strong> to confirm:</label>

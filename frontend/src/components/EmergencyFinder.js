@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { API_URL } from '../config';
+import React, { useState, useEffect, useCallback } from 'react';
 import { getEmergencyNumbersByLocation, formatEmergencyInfo } from '../utils/emergencyNumbers';
+import { apiPost } from '../utils/apiClient';
+import { Alert, Spinner } from './ui';
 
 function EmergencyFinder({ onClose, onHospitalsFound }) {
   const [loading, setLoading] = useState(false);
@@ -9,7 +10,7 @@ function EmergencyFinder({ onClose, onHospitalsFound }) {
   const [emergencyNumbers, setEmergencyNumbers] = useState(null);
   const [userCountry, setUserCountry] = useState('');
 
-  const findEmergencyHospitals = async () => {
+  const findEmergencyHospitals = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -22,36 +23,22 @@ function EmergencyFinder({ onClose, onHospitalsFound }) {
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
-        const token = localStorage.getItem('token');
 
         try {
-          const response = await fetch(`${API_URL}/api/search-hospitals-osm`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              lat: latitude,
-              lon: longitude,
-              location: 'My Location',
-              radius: 10,
-              emergencyOnly: true,
-              sortBy: 'nearby'
-            })
+          const data = await apiPost('/api/search-hospitals-osm', {
+            lat: latitude,
+            lon: longitude,
+            location: 'My Location',
+            radius: 10,
+            emergencyOnly: true,
+            sortBy: 'nearby'
           });
-
-          if (response.ok) {
-            const data = await response.json();
-            setEmergencyHospitals(data.hospitals || []);
-            if (onHospitalsFound) {
-              onHospitalsFound(data.hospitals);
-            }
-          } else {
-            setError('Failed to find emergency hospitals');
+          setEmergencyHospitals(data.hospitals || []);
+          if (onHospitalsFound) {
+            onHospitalsFound(data.hospitals || []);
           }
         } catch (err) {
-          setError('Network error');
+          setError(err.message || 'Failed to find emergency hospitals');
         } finally {
           setLoading(false);
         }
@@ -62,7 +49,7 @@ function EmergencyFinder({ onClose, onHospitalsFound }) {
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
-  };
+  }, [onHospitalsFound]);
 
   useEffect(() => {
     findEmergencyHospitals();
@@ -72,7 +59,7 @@ function EmergencyFinder({ onClose, onHospitalsFound }) {
       setEmergencyNumbers(numbers);
       setUserCountry(numbers.country);
     });
-  }, []);
+  }, [findEmergencyHospitals]);
 
   const callEmergency = (phone) => {
     window.location.href = `tel:${phone}`;
@@ -96,14 +83,11 @@ function EmergencyFinder({ onClose, onHospitalsFound }) {
         </div>
 
         {loading && (
-          <div className="loading">
-            <div className="spinner"></div>
-            <p>Locating emergency hospitals near you...</p>
-          </div>
+          <Spinner label="Locating emergency hospitals near you..." />
         )}
 
         {error && (
-          <div className="error-message">
+          <Alert type="error">
             <p>{error}</p>
             {emergencyNumbers && (
               <div className="emergency-numbers-list">
@@ -116,7 +100,7 @@ function EmergencyFinder({ onClose, onHospitalsFound }) {
                 ))}
               </div>
             )}
-          </div>
+          </Alert>
         )}
 
         {!loading && !error && emergencyHospitals.length === 0 && (

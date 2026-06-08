@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import '../styles/Auth.css';
-import { API_URL } from '../config';
+import { apiPost } from '../utils/apiClient';
+import { Alert } from '../components/ui';
+import { validatePassword, PASSWORD_RULE_MESSAGE } from '../utils/passwordValidation';
 
 function Signup() {
   const [formData, setFormData] = useState({
@@ -31,47 +33,29 @@ function Signup() {
       return;
     }
 
-    if (formData.password.length < 6) {
-      setError('Password must be at least 6 characters');
+    if (!validatePassword(formData.password)) {
+      setError(PASSWORD_RULE_MESSAGE);
       return;
     }
 
     setLoading(true);
 
     try {
-      console.log(`Sending signup request to ${API_URL}/api/auth/signup`);
-      const response = await fetch(`${API_URL}/api/auth/signup`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          username: formData.username,
-          email: formData.email,
-          password: formData.password
-        })
+      await apiPost('/api/auth/signup', {
+        username: formData.username,
+        email: formData.email,
+        password: formData.password
       });
-
-      console.log('Response status:', response.status);
-      const data = await response.json();
-      console.log('Response data:', data);
-
-      if (response.ok) {
-        // Redirect to OTP verification page
-        navigate('/verify-otp', { state: { email: formData.email } });
-      } else {
-        setError(data.error || 'Registration failed');
-      }
+      navigate('/verify-otp', { state: { email: formData.email } });
     } catch (err) {
-      console.error('Signup error:', err);
-      setError('Network error. Please try again. Error: ' + err.message);
+      setError(err.message || 'Network error. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="auth-container">
+    <div className="auth-container" style={{backgroundImage: 'url(/images/auth-bg.png)'}}>
       <div className="auth-card">
         <div className="auth-header">
           <div className="logo">
@@ -85,7 +69,7 @@ function Signup() {
           <p>Join thousands of users finding the best healthcare nearby</p>
         </div>
 
-        {error && <div className="error-message">{error}</div>}
+        <Alert type="error">{error}</Alert>
 
         <form onSubmit={handleSubmit} className="auth-form">
           <div className="form-group">
@@ -123,8 +107,9 @@ function Signup() {
               value={formData.password}
               onChange={handleChange}
               required
-              placeholder="At least 6 characters"
+              placeholder="Use a strong password"
             />
+            <small>{PASSWORD_RULE_MESSAGE}</small>
           </div>
 
           <div className="form-group">

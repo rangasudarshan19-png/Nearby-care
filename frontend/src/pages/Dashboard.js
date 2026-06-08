@@ -14,7 +14,8 @@ import MyAppointments from '../components/MyAppointments';
 import AppointmentBooking from '../components/AppointmentBooking';
 import UserProfile from '../components/UserProfile';
 import '../styles/Dashboard.css';
-import { API_URL } from '../config';
+import { apiPost } from '../utils/apiClient';
+import { Alert } from '../components/ui';
 
 function Dashboard({ user, onLogout }) {
   const [hospitals, setHospitals] = useState([]);
@@ -36,25 +37,10 @@ function Dashboard({ user, onLogout }) {
     setError(null);
     setHospitals([]);
 
-    const token = localStorage.getItem('token');
-
     try {
-      const response = await fetch(`${API_URL}/api/search-hospitals-osm`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(searchData),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch hospitals');
-      }
-
-      const data = await response.json();
+      const data = await apiPost('/api/search-hospitals-osm', searchData);
       // If AI scoring present, hospitals are already sorted
-      setHospitals(data.hospitals);
+      setHospitals(data.hospitals || []);
       // Normalize backend coordinates (lat, lon -> lat, lng for Leaflet)
       if (data.coordinates) {
         setSearchLocation({
@@ -65,43 +51,31 @@ function Dashboard({ user, onLogout }) {
         setSearchLocation(null);
       }
       
-      if (data.hospitals.length === 0) {
+      if ((data.hospitals || []).length === 0) {
         setMessage('No hospitals found in this area. Try a different location or increase the search radius.');
       } else {
         setMessage(null);
       }
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Failed to fetch hospitals');
     } finally {
       setLoading(false);
     }
   };
 
   const handleAddFavorite = async (hospital) => {
-    const token = localStorage.getItem('token');
-
     try {
-      const response = await fetch(`${API_URL}/api/favorites`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          hospital_name: hospital.name,
-          hospital_address: hospital.address,
-          place_id: hospital.id?.toString(),
-          latitude: hospital.latitude,
-          longitude: hospital.longitude,
-        }),
+      await apiPost('/api/favorites', {
+        hospital_name: hospital.name,
+        hospital_address: hospital.address,
+        place_id: hospital.id?.toString(),
+        latitude: hospital.latitude,
+        longitude: hospital.longitude,
       });
-
-      if (response.ok) {
-        setMessage('Hospital added to favorites!');
-        setTimeout(() => setMessage(null), 3000);
-      }
+      setMessage('Hospital added to favorites!');
+      setTimeout(() => setMessage(null), 3000);
     } catch (err) {
-      setError('Failed to add to favorites');
+      setError(err.message || 'Failed to add to favorites');
     }
   };
 
@@ -226,7 +200,7 @@ function Dashboard({ user, onLogout }) {
           </button>
         </div>
 
-        {error && <div className="error">{error}</div>}
+        <Alert type="error">{error}</Alert>
         {message && <div className="success">{message}</div>}
 
         {activeTab === 'search' && (

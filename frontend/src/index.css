@@ -7,13 +7,12 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: var(--font);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 50%, #38bdf8 100%);
+  background: var(--bg);
   min-height: 100vh;
+  color: var(--text);
 }
 
 code {
@@ -29,27 +28,34 @@ code {
 
 /* Header Styles */
 .header {
-  background: white;
+  background: var(--bg-white);
   padding: 20px;
-  border-radius: 10px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   margin-bottom: 30px;
   text-align: center;
 }
 
 .header h1 {
-  color: #0ea5e9;
+  color: var(--primary);
   font-size: 2.5rem;
   margin-bottom: 10px;
 }
 
 .header p {
-  color: #666;
+  color: var(--text-secondary);
   font-size: 1.1rem;
 }
 
 /* Search Section */
-.search-section { background: var(--card); padding: 30px; border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 30px; }
+.search-section {
+  background: var(--bg-white);
+  padding: 28px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 24px;
+  border: 1px solid var(--border);
+}
 
 .search-form {
   display: flex;
@@ -66,19 +72,21 @@ code {
 .form-group label {
   display: block;
   margin-bottom: 8px;
-  color: #333;
+  color: var(--text);
   font-weight: 600;
+  font-size: 0.9rem;
 }
 
 .form-group input,
 .form-group select,
 .form-group textarea {
   width: 100%;
-  padding: 12px;
-  border: 1.5px solid #e5e7eb;
-  border-radius: 12px;
-  font-size: 1rem;
-  transition: border-color 0.3s, box-shadow 0.3s;
+  padding: 12px 16px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.95rem;
+  font-family: var(--font);
+  transition: border-color var(--duration), box-shadow var(--duration);
 }
 
 .form-group input:focus,
@@ -86,15 +94,32 @@ code {
 .form-group textarea:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(99,102,241,.15);
+  box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
-.btn { padding: 12px 30px; background: var(--primary); color: #fff; border: none; border-radius: 12px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: transform .2s, box-shadow .2s; }
-.btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(79,70,229,.35); }
+.btn {
+  padding: 12px 28px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 1rem;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all var(--duration) var(--ease);
+}
+.btn:hover {
+  background: var(--primary-dark);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-primary);
+}
 
 .btn:disabled {
   background: #ccc;
   cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 .btn-secondary {
@@ -102,7 +127,7 @@ code {
 }
 
 .btn-secondary:hover {
-  background: #6d28d9;
+  background: var(--secondary-dark);
 }
 
 /* Results Section */
@@ -119,31 +144,58 @@ code {
   }
 }
 
-.map-container { background: var(--card); padding: 20px; border-radius: var(--radius); box-shadow: var(--shadow); height: 520px; }
+.map-container {
+  background: var(--bg-white);
+  padding: 20px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  height: 520px;
+  border: 1px solid var(--border);
+}
 
-.hospitals-list { background: var(--card); padding: 20px; border-radius: var(--radius); box-shadow: var(--shadow); max-height: 520px; overflow-y: auto; }
+.hospitals-list {
+  background: var(--bg-white);
+  padding: 20px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  max-height: 520px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+}
 
 .hospitals-list h2 {
-  color: #0ea5e9;
+  color: var(--text);
   margin-bottom: 20px;
 }
 
-.hospital-card { background: linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); padding: 18px; border-radius: 14px; margin-bottom: 16px; border: 1px solid #e5e7eb; transition: transform .2s, box-shadow .2s; }
-.hospital-card:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(2,6,23,.12); }
+.hospital-card {
+  background: var(--bg-white);
+  padding: 18px;
+  border-radius: var(--radius);
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary);
+  transition: all var(--duration) var(--ease);
+}
+.hospital-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
 
 .hospital-card h3 {
-  color: #333;
+  color: var(--text);
   margin-bottom: 8px;
-  font-size: 1.2rem;
+  font-size: 1.1rem;
 }
 
 .hospital-card p {
-  color: #666;
+  color: var(--text-secondary);
   margin-bottom: 5px;
+  font-size: 0.9rem;
 }
 
 .hospital-card .rating {
-  color: #ffa500;
+  color: var(--accent);
   font-weight: 600;
 }
 
@@ -153,24 +205,37 @@ code {
   gap: 10px;
 }
 
-.btn-small { padding: 8px 12px; font-size: 0.9rem; background: var(--secondary); color: #fff; border: none; border-radius: 10px; cursor: pointer; transition: transform .2s, box-shadow .2s; }
-.btn-small:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(139,92,246,.35); }
+.btn-small {
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 600;
+  transition: all var(--duration) var(--ease);
+}
+.btn-small:hover {
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+}
 
 /* Loading Spinner */
 .loading {
   text-align: center;
   padding: 40px;
-  color: white;
-  font-size: 1.2rem;
+  color: var(--text-secondary);
+  font-size: 1.1rem;
 }
 
 .spinner {
-  border: 4px solid rgba(255, 255, 255, 0.3);
-  border-top: 4px solid white;
+  border: 4px solid var(--primary-light);
+  border-top: 4px solid var(--primary);
   border-radius: 50%;
   width: 40px;
   height: 40px;
-  animation: spin 1s linear infinite;
+  animation: spin 0.8s linear infinite;
   margin: 20px auto;
 }
 
@@ -180,53 +245,71 @@ code {
 }
 
 /* Error Message */
-.error { background: #fee2e2; color: #991b1b; padding: 14px 16px; border-radius: 12px; margin-bottom: 20px; border-left: 4px solid var(--danger); background-image: linear-gradient(180deg, #fff 0, #fee2e2 100%); }
+.error {
+  background: var(--danger-light);
+  color: #991b1b;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+  border-left: 4px solid var(--danger);
+}
 
 /* Success Message */
-.success { background: #ecfdf5; color: #065f46; padding: 14px 16px; border-radius: 12px; margin-bottom: 20px; border-left: 4px solid var(--accent); }
+.success {
+  background: var(--success-light);
+  color: #065f46;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+  border-left: 4px solid var(--success);
+}
 
 /* Info Message */
 .info {
-  background: white;
+  background: var(--bg-white);
   padding: 20px;
-  border-radius: 10px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   text-align: center;
-  color: #666;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
 }
 
 /* Leaflet Map Styles */
 .leaflet-container {
   height: 460px;
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 
 /* Tabs */
 .tabs {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   margin-bottom: 20px;
 }
 
 .tab {
   padding: 10px 20px;
-  background: #e0e0e0;
+  background: var(--bg-subtle);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius);
   cursor: pointer;
   font-weight: 600;
-  transition: background 0.3s;
+  font-family: var(--font);
+  transition: all var(--duration) var(--ease);
+  color: var(--text-secondary);
 }
 
 .tab.active {
-  background: #0ea5e9;
+  background: var(--primary);
   color: white;
+  box-shadow: var(--shadow-primary);
 }
 
 .tab:hover {
-  background: #d0d0d0;
+  background: var(--border);
 }
 
 .tab.active:hover {
-  background: #0891b2;
+  background: var(--primary-dark);
 }

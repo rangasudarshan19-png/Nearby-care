@@ -1,0 +1,290 @@
+/* =============================================
+   NEARBY CARE — Polish Layer v2
+   Applies refined styling globally
+   ============================================= */
+
+/* ── Dashboard ── */
+.dashboard-container {
+  background: var(--bg) !important;
+  min-height: 100vh;
+}
+
+.dashboard-header {
+  background: var(--bg-white) !important;
+  border-bottom: 1px solid var(--border) !important;
+  box-shadow: var(--shadow-xs) !important;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.dashboard-header .logo svg {
+  color: var(--primary) !important;
+  stroke: var(--primary) !important;
+}
+
+.dashboard-header h1 {
+  color: var(--text) !important;
+  font-family: var(--font) !important;
+}
+
+/* ── Entry Animations ── */
+.dashboard-main {
+  animation: slideUp var(--duration-slow) var(--ease) forwards;
+}
+.auth-card {
+  animation: slideUp var(--duration-slow) var(--ease-bounce) forwards;
+}
+.hero-content {
+  animation: fadeIn 0.8s var(--ease) forwards;
+}
+
+/* ── Tabs (Dashboard) ── */
+.tabs {
+  background: var(--bg-white) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  padding: 6px !important;
+  gap: 4px !important;
+  box-shadow: var(--shadow-xs) !important;
+}
+
+.tab {
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  border: none !important;
+  border-radius: var(--radius) !important;
+  padding: 10px 18px !important;
+  font-weight: 600 !important;
+  font-size: 0.88rem !important;
+  transition: all var(--duration) var(--ease) !important;
+  box-shadow: none !important;
+}
+
+.tab:hover {
+  background: var(--bg-subtle) !important;
+  color: var(--text) !important;
+}
+
+.tab.active {
+  background: var(--primary) !important;
+  color: #fff !important;
+  box-shadow: var(--shadow-primary) !important;
+}
+
+.tab.active:hover {
+  background: var(--primary-dark) !important;
+}
+
+/* ── Cards ── */
+.search-section,
+.hospitals-list,
+.map-container,
+.feature-card,
+.step,
+.review-item,
+.info {
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-sm) !important;
+  transition: all var(--duration) var(--ease) !important;
+}
+
+/* ── Hospital Cards ── */
+.hospital-card {
+  background: var(--bg-white) !important;
+  border: 1px solid var(--border) !important;
+  border-left: 4px solid var(--primary) !important;
+  border-radius: var(--radius) !important;
+  padding: 20px !important;
+  box-shadow: var(--shadow-xs) !important;
+  transition: all var(--duration) var(--ease) !important;
+}
+.hospital-card:hover {
+  transform: translateY(-3px) !important;
+  box-shadow: var(--shadow-md) !important;
+  border-left-color: var(--primary-dark) !important;
+}
+
+/* ── Auth Pages ── */
+.auth-container {
+  background: var(--bg-subtle) !important;
+  background-size: cover !important;
+  background-position: center !important;
+}
+.auth-card {
+  background: rgba(255,255,255,0.95) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(255,255,255,0.8) !important;
+  box-shadow: var(--shadow-xl) !important;
+  border-radius: var(--radius-2xl) !important;
+}
+
+/* ── Inputs ── */
+.form-group input,
+.form-group select,
+.form-group textarea {
+  border: 1.5px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  background: var(--bg-white) !important;
+  transition: all var(--duration) var(--ease) !important;
+  font-family: var(--font) !important;
+}
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 3px var(--primary-glow) !important;
+  background: var(--bg-white) !important;
+}
+
+/* ── Buttons (global polish) ── */
+.btn-submit {
+  background: var(--primary) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: var(--shadow-primary) !important;
+  transition: all var(--duration) var(--ease) !important;
+  font-family: var(--font) !important;
+}
+.btn-submit:hover:not(:disabled) {
+  background: var(--primary-dark) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 14px 28px rgba(13,148,136,0.3) !important;
+}
+
+.btn-search-submit {
+  background: var(--primary) !important;
+  box-shadow: var(--shadow-primary) !important;
+}
+.btn-search-submit:hover:not(:disabled) {
+  background: var(--primary-dark) !important;
+  transform: translateY(-2px) !important;
+}
+
+/* ── Map ── */
+.map-container h2 {
+  background: var(--primary) !important;
+}
+
+/* ── Chat / Symptom Advisor ── */
+.symptom-advisor-chat {
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow) !important;
+  overflow: hidden !important;
+}
+
+.chat-messages {
+  background: var(--bg-subtle) !important;
+}
+
+.message-user .message-content {
+  background: var(--primary) !important;
+  color: #fff !important;
+}
+
+.message-system .message-content {
+  background: var(--bg-white) !important;
+  border: 1px solid var(--border) !important;
+}
+
+/* ── Spinner ── */
+.spinner {
+  border-color: var(--primary-light) !important;
+  border-top-color: var(--primary) !important;
+}
+
+/* ── Emergency Button ── */
+.btn-emergency {
+  animation: pulse-glow 2.5s infinite !important;
+}
+
+/* ── Loading states ── */
+.loading {
+  color: var(--primary) !important;
+  background: var(--bg-white) !important;
+  border: 1px solid var(--border) !important;
+}
+
+/* ── Smooth page transitions ── */
+.my-appointments,
+.doctors-list-container,
+.favorites-container,
+.search-history-container,
+.user-profile-container {
+  animation: slideUp 0.35s var(--ease) forwards;
+}
+
+/* ── Doctor cards ── */
+.doctor-card-detailed {
+  transition: all 0.3s var(--ease) !important;
+  border: 1px solid var(--border) !important;
+}
+.doctor-card-detailed:hover {
+  transform: translateY(-4px) !important;
+  box-shadow: var(--shadow-lg) !important;
+  border-color: transparent !important;
+}
+
+/* ── Appointment cards ── */
+.appointment-card {
+  transition: all 0.3s var(--ease) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+}
+.appointment-card:hover {
+  box-shadow: var(--shadow-md) !important;
+  transform: translateY(-2px) !important;
+}
+
+/* ── Filter buttons ── */
+.filter-buttons button {
+  transition: all 0.2s var(--ease) !important;
+  border-radius: var(--radius) !important;
+  font-family: var(--font) !important;
+}
+.filter-buttons button.active {
+  background: var(--primary) !important;
+  border-color: var(--primary) !important;
+  box-shadow: var(--shadow-primary) !important;
+}
+
+/* ── Status badges ── */
+.status-badge {
+  letter-spacing: 0.3px !important;
+  font-family: var(--font) !important;
+}
+
+/* ── Compare button ── */
+.btn-compare {
+  border-radius: var(--radius) !important;
+  transition: all 0.3s var(--ease) !important;
+}
+.btn-compare:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3) !important;
+}
+
+/* ── Record cards ── */
+.record-card {
+  border-radius: var(--radius) !important;
+  transition: all 0.3s var(--ease) !important;
+}
+.record-card:hover {
+  border-color: var(--primary) !important;
+  box-shadow: var(--shadow-md) !important;
+  transform: translateY(-2px) !important;
+}
+
+/* ── Responsive Tabs ── */
+@media (max-width: 768px) {
+  .tabs {
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+  }
+  .tab {
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+  }
+}

@@ -2,16 +2,38 @@
 Test suite for hospital search and favorites
 """
 
-def test_search_hospitals(client, auth_headers):
+from unittest.mock import patch
+
+@patch('app.requests.get')
+@patch('app.requests.post')
+def test_search_hospitals(mock_post, mock_get, client, auth_headers):
     """Test hospital search"""
-    response = client.post('/api/search-hospitals-osm',
-                          headers=auth_headers,
-                          json={
-                              'location': 'New York',
-                              'symptoms': 'chest pain'
-                          })
-    # Note: This requires external API, might not work in tests
-    # Consider mocking the external API calls
+    # Mock geocoding response
+    mock_get.return_value.status_code = 200
+    mock_get.return_value.json.return_value = [{'lat': '40.7128', 'lon': '-74.0060'}]
+    
+    # Mock Overpass AI response
+    mock_post.return_value.status_code = 200
+    mock_post.return_value.json.return_value = {
+        'elements': [
+            {
+                'id': 1,
+                'tags': {'name': 'Mock Hospital', 'amenity': 'hospital'},
+                'lat': 40.7128,
+                'lon': -74.0060
+            }
+        ]
+    }
+    
+    with patch('app.intelligent_ai_analysis') as mock_ai:
+        mock_ai.return_value = ([{'id': 1, 'name': 'Mock Hospital', 'ai_score': 0.9}], {'method': 'mock'})
+        response = client.post('/api/search-hospitals-osm',
+                            headers=auth_headers,
+                            json={
+                                'location': 'New York',
+                                'symptoms': 'chest pain'
+                            })
+        
     assert response.status_code in [200, 500, 502]  # 500/502 if external API fails
 
 def test_add_favorite(client, auth_headers):

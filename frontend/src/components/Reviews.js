@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { API_URL } from '../config';
+import { apiGet, apiPost } from '../utils/apiClient';
+import { Alert, EmptyState, Spinner } from './ui';
 
 function Reviews({ hospital }) {
   const [items, setItems] = useState([]);
@@ -11,13 +12,12 @@ function Reviews({ hospital }) {
 
   const load = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/reviews?hospital_id=${hospital.id}`);
-      if (!res.ok) throw new Error('Failed to load reviews');
-      const data = await res.json();
+      const data = await apiGet(`/api/reviews?hospital_id=${hospital.id}`);
       setItems(Array.isArray(data) ? data : []);
+      setError(null);
     } catch (e) {
-      setError('Failed to load reviews');
-      console.error('Load reviews error:', e);
+      setError(e.message || 'Failed to load reviews');
+      setItems([]);
     }
   };
 
@@ -38,36 +38,16 @@ function Reviews({ hospital }) {
     setError(null);
     setSuccess(false);
     
-    const token = localStorage.getItem('token');
-    if (!token) {
-      setError('Please log in to add a review');
-      setLoading(false);
-      return;
-    }
-
     try {
-      const res = await fetch(`${API_URL}/api/reviews`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          hospital_id: hospital.id,
-          hospital_name: hospital.name,
-          hospital_address: hospital.address,
-          latitude: hospital.latitude,
-          longitude: hospital.longitude,
-          rating: parseInt(rating),
-          comment: comment.trim(),
-        })
+      await apiPost('/api/reviews', {
+        hospital_id: hospital.id,
+        hospital_name: hospital.name,
+        hospital_address: hospital.address,
+        latitude: hospital.latitude,
+        longitude: hospital.longitude,
+        rating: parseInt(rating, 10),
+        comment: comment.trim(),
       });
-
-      const responseData = await res.json();
-      
-      if (!res.ok) {
-        throw new Error(responseData.error || `HTTP ${res.status}: Failed to add review`);
-      }
 
       setSuccess(true);
       setComment('');
@@ -76,7 +56,6 @@ function Reviews({ hospital }) {
       await load();
     } catch (e) {
       setError(e.message || 'Failed to add review');
-      console.error('Submit review error:', e);
     } finally {
       setLoading(false);
     }
@@ -88,7 +67,9 @@ function Reviews({ hospital }) {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" strokeWidth="1"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
         Reviews
       </h4>
-      {items.length === 0 && <p>No reviews yet. Be the first!</p>}
+      {items.length === 0 && (
+        <EmptyState title="No reviews yet" description="Be the first to share your experience." />
+      )}
       {items.slice(0, 3).map(r => (
         <div key={r.id} className="review-item">
           <strong>{Array.from({length: r.rating}).map((_, i) => <svg key={i} width="14" height="14" viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" strokeWidth="1" style={{marginRight:1}}><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>)}</strong> — {r.comment}
@@ -96,11 +77,11 @@ function Reviews({ hospital }) {
         </div>
       ))}
       <form onSubmit={submit} className="review-form">
-        {error && <div className="error-message">{error}</div>}
-        {success && <div className="success-message">
+        <Alert type="error">{error}</Alert>
+        {success && <Alert type="success">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
           Review added successfully!
-        </div>}
+        </Alert>}
         <label>
           Rating
           <select value={rating} onChange={e => setRating(e.target.value)}>
@@ -118,7 +99,7 @@ function Reviews({ hospital }) {
           />
         </label>
         <button className="btn-small" type="submit" disabled={loading}>
-          {loading ? 'Submitting...' : 'Add Review'}
+          {loading ? <Spinner label="Submitting..." inline /> : 'Add Review'}
         </button>
       </form>
     </div>

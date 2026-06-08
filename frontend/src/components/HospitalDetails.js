@@ -1,35 +1,37 @@
-import React, { useState, useEffect } from 'react';
-import { API_URL } from '../config';
+import React, { useState, useEffect, useCallback } from 'react';
 import Reviews from './Reviews';
+import { apiGet } from '../utils/apiClient';
+import { Alert, EmptyState, Spinner } from './ui';
 
 function HospitalDetails({ hospital, onClose, onBookAppointment }) {
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('info');
+
+  const fetchDoctors = useCallback(async () => {
+    if (!hospital) {
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiGet(`/api/doctors?hospital_id=${hospital.id}`);
+      setDoctors(data.doctors || []);
+    } catch (error) {
+      setError(error.message || 'Failed to load doctors for this hospital.');
+      setDoctors([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [hospital]);
 
   useEffect(() => {
     if (hospital && activeTab === 'doctors') {
       fetchDoctors();
     }
-  }, [hospital, activeTab]);
-
-  const fetchDoctors = async () => {
-    setLoading(true);
-    const token = localStorage.getItem('token');
-    try {
-      const response = await fetch(`${API_URL}/api/doctors?hospital_id=${hospital.id}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setDoctors(data.doctors);
-      }
-    } catch (error) {
-      console.error('Error fetching doctors:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [hospital, activeTab, fetchDoctors]);
 
   if (!hospital) return null;
 
@@ -193,10 +195,14 @@ function HospitalDetails({ hospital, onClose, onBookAppointment }) {
 
           {activeTab === 'doctors' && (
             <div className="doctors-section">
+              <Alert type="error">{error}</Alert>
               {loading ? (
-                <p>Loading doctors...</p>
+                <Spinner label="Loading doctors..." />
               ) : doctors.length === 0 ? (
-                <p>No doctors available for this hospital yet.</p>
+                <EmptyState
+                  title="No doctors available yet"
+                  description="Doctors added by the admin for this hospital will appear here."
+                />
               ) : (
                 <div className="doctors-list">
                   {doctors.map(doctor => (

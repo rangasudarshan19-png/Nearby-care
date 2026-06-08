@@ -107,3 +107,49 @@ def test_get_available_slots(client, auth_headers):
         assert response.status_code == 200
         data = response.json
         assert 'slots' in data
+
+
+def test_duplicate_scheduled_slot_is_rejected(client, auth_headers):
+    """Test database-backed scheduled slot uniqueness"""
+    from datetime import date, timedelta
+    from app import Doctor, db
+
+    doctor = Doctor(
+        name='Dr Duplicate Guard',
+        specialty='General Medicine',
+        hospital_id='duplicate-guard',
+        hospital_name='Duplicate Guard Hospital',
+        available_days='[]',
+        available_hours='09:00-11:00'
+    )
+    db.session.add(doctor)
+    db.session.commit()
+
+    appointment_date = (date.today() + timedelta(days=1)).isoformat()
+    payload = {
+        'doctor_id': doctor.id,
+        'appointment_date': appointment_date,
+        'appointment_time': '09:00',
+        'symptoms': 'Test'
+    }
+
+    first = client.post('/api/appointments', headers=auth_headers, json=payload)
+    second = client.post('/api/appointments', headers=auth_headers, json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 400
+    assert second.json['error'] == 'This time slot is already booked'
+
+
+def test_deleted_doctor_cannot_be_booked(client, auth_headers):
+    """Test a hard-deleted doctor cannot receive new bookings"""
+    from datetime import date, timedelta
+
+    response = client.post('/api/appointments', headers=auth_headers, json={
+        'doctor_id': 999999,
+        'appointment_date': (date.today() + timedelta(days=1)).isoformat(),
+        'appointment_time': '09:00'
+    })
+
+    assert response.status_code == 404
+    assert response.json['error'] == 'Doctor not found'

@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { API_URL } from '../config';
+import React, { useState, useEffect, useCallback } from 'react';
 import AppointmentBooking from './AppointmentBooking';
+import { apiGet } from '../utils/apiClient';
 
 function DoctorsList() {
   const [doctors, setDoctors] = useState([]);
@@ -11,56 +11,41 @@ function DoctorsList() {
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [showBooking, setShowBooking] = useState(false);
 
-  useEffect(() => {
-    fetchSpecialties();
-    fetchDoctors();
-  }, []);
-
-  useEffect(() => {
-    fetchDoctors();
-  }, [selectedSpecialty]);
-
-  const fetchSpecialties = async () => {
-    const token = localStorage.getItem('token');
+  const fetchSpecialties = useCallback(async () => {
     try {
-      const response = await fetch(`${API_URL}/api/specialties`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setSpecialties(data.specialties || []);
-      }
+      const data = await apiGet('/api/specialties');
+      setSpecialties(data.specialties || []);
     } catch (error) {
       console.error('Error fetching specialties:', error);
     }
-  };
+  }, []);
 
-  const fetchDoctors = async () => {
+  const fetchDoctors = useCallback(async () => {
     setLoading(true);
-    const token = localStorage.getItem('token');
     
-    let url = `${API_URL}/api/doctors`;
+    let url = '/api/doctors';
     if (selectedSpecialty) {
       url += `?specialty=${encodeURIComponent(selectedSpecialty)}`;
     }
 
     try {
-      const response = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setDoctors(data.doctors || []);
-      } else {
-        setError('Failed to load doctors');
-      }
+      const data = await apiGet(url);
+      setDoctors(data.doctors || []);
+      setError(null);
     } catch (err) {
-      setError('Network error');
+      setError(err.message || 'Failed to load doctors');
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedSpecialty]);
+
+  useEffect(() => {
+    fetchSpecialties();
+  }, [fetchSpecialties]);
+
+  useEffect(() => {
+    fetchDoctors();
+  }, [fetchDoctors]);
 
   const handleBookAppointment = (doctor) => {
     setSelectedDoctor(doctor);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { API_URL } from '../config';
+import { apiPost } from '../utils/apiClient';
 
 function SymptomAdvisor() {
   const [messages, setMessages] = useState([
@@ -35,21 +35,21 @@ function SymptomAdvisor() {
           setLocationPermission('granted');
           setMessages(prev => [...prev, {
             role: 'system',
-            content: `✓ Location access granted. I can now suggest nearby hospitals if needed.`
+            content: 'Location access granted. I can now suggest nearby hospitals if needed.'
           }]);
         },
         (error) => {
           setLocationPermission('denied');
           setMessages(prev => [...prev, {
             role: 'system',
-            content: '✗ Location access denied. I can still help with symptom analysis, but won\'t be able to suggest nearby hospitals.'
+            content: 'Location access denied. I can still help with symptom analysis, but will not be able to suggest nearby hospitals.'
           }]);
         }
       );
     } else {
       setMessages(prev => [...prev, {
         role: 'system',
-        content: '✗ Geolocation is not supported by your browser.'
+        content: 'Geolocation is not supported by your browser.'
       }]);
     }
   };
@@ -65,26 +65,15 @@ function SymptomAdvisor() {
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setLoading(true);
 
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/symptom-chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          message: userMessage,
-          location: location,
-          chat_history: messages.filter(m => m.role !== 'system')
-        })
-      });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to get response');
-      }
+    try {
+      const data = await apiPost('/api/symptom-chat', {
+        message: userMessage,
+        location: location,
+        chat_history: messages.filter(m => m.role !== 'system')
+      }, { signal: controller.signal });
 
       // Add AI response
       setMessages(prev => [...prev, {
@@ -101,11 +90,15 @@ function SymptomAdvisor() {
       }
 
     } catch (error) {
+      const message = error.name === 'AbortError'
+        ? 'The assistant is taking too long to respond. Please try again in a moment.'
+        : error.message;
       setMessages(prev => [...prev, {
         role: 'error',
-        content: `Error: ${error.message}`
+        content: message
       }]);
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   };
@@ -240,7 +233,7 @@ function SymptomAdvisor() {
       </form>
 
       <div className="chat-disclaimer">
-        ⚠️ This AI assistant provides general information only. Always consult a healthcare professional for medical advice.
+        This AI assistant provides general information only. Always consult a healthcare professional for medical advice.
       </div>
     </div>
   );

@@ -4,10 +4,20 @@ import LandingPage from './pages/LandingPage';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import VerifyOTP from './pages/VerifyOTP';
+import ForgotPassword from './pages/ForgotPassword';
 import Dashboard from './pages/Dashboard';
 import AdminPanel from './pages/AdminPanel';
 import './index.css';
-import { API_URL } from './config';
+import './styles/Polish.css';
+import { apiGet } from './utils/apiClient';
+import { Spinner } from './components/ui';
+import {
+  clearAuthSession,
+  getAuthToken,
+  setAuthSession,
+  subscribeToLogout,
+  updateStoredUser
+} from './utils/authStorage';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -16,51 +26,42 @@ function App() {
 
   useEffect(() => {
     checkAuth();
+    return subscribeToLogout(() => {
+      setUser(null);
+      setIsAuthenticated(false);
+    });
   }, []);
 
   const checkAuth = async () => {
-    const token = localStorage.getItem('token');
+    const token = getAuthToken();
     if (token) {
       try {
-        const response = await fetch(`${API_URL}/api/auth/me`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setUser(data.user);
-          setIsAuthenticated(true);
-        } else {
-          localStorage.removeItem('token');
-        }
+        const data = await apiGet('/api/auth/me');
+        setUser(data.user);
+        updateStoredUser(data.user);
+        setIsAuthenticated(true);
       } catch (error) {
         console.error('Auth check failed:', error);
-        localStorage.removeItem('token');
+        clearAuthSession({ broadcast: true });
       }
     }
     setLoading(false);
   };
 
   const handleLogin = (token, userData) => {
-    localStorage.setItem('token', token);
+    setAuthSession(token, userData);
     setUser(userData);
     setIsAuthenticated(true);
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('token');
+    clearAuthSession({ broadcast: true });
     setUser(null);
     setIsAuthenticated(false);
   };
 
   if (loading) {
-    return (
-      <div className="loading">
-        <div className="spinner"></div>
-        <p>Loading...</p>
-      </div>
-    );
+    return <Spinner />;
   }
 
   return (
@@ -71,7 +72,7 @@ function App() {
           path="/login" 
           element={
             isAuthenticated ? 
-            <Navigate to="/dashboard" /> : 
+            <Navigate to={user?.role === 'admin' || user?.is_admin ? '/admin' : '/dashboard'} /> : 
             <Login onLogin={handleLogin} />
           } 
         />
@@ -84,6 +85,14 @@ function App() {
           } 
         />
         <Route path="/verify-otp" element={<VerifyOTP onLogin={handleLogin} />} />
+        <Route 
+          path="/forgot-password" 
+          element={
+            isAuthenticated ? 
+            <Navigate to={user?.role === 'admin' || user?.is_admin ? '/admin' : '/dashboard'} /> : 
+            <ForgotPassword />
+          } 
+        />
         <Route 
           path="/dashboard" 
           element={

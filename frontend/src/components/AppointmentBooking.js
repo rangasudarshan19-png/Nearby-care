@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { API_URL } from '../config';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { apiGet, apiPost } from '../utils/apiClient';
+import { Alert, Spinner } from './ui';
 
 function AppointmentBooking({ doctor, onClose, onSuccess }) {
   const [selectedDate, setSelectedDate] = useState('');
@@ -9,30 +10,57 @@ function AppointmentBooking({ doctor, onClose, onSuccess }) {
   const [availableSlots, setAvailableSlots] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [slotMessage, setSlotMessage] = useState('');
   const [success, setSuccess] = useState(false);
+
+  const availableDays = useMemo(() => doctor.available_days || [], [doctor.available_days]);
+
+  const getDateDay = useCallback((dateValue) => {
+    if (!dateValue) return '';
+    return new Date(`${dateValue}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short' });
+  }, []);
+
+  const isDateAvailable = useCallback((dateValue) => {
+    if (!dateValue || availableDays.length === 0) return true;
+    const selectedDay = getDateDay(dateValue);
+    return availableDays.some(day => day.slice(0, 3).toLowerCase() === selectedDay.toLowerCase());
+  }, [availableDays, getDateDay]);
+
+  const selectedDateUnavailable = selectedDate && !isDateAvailable(selectedDate);
+
+  const fetchAvailableSlots = useCallback(async () => {
+    if (!isDateAvailable(selectedDate)) {
+      setAvailableSlots([]);
+      setSelectedTime('');
+      setSlotMessage(`Doctor is not available on ${new Date(`${selectedDate}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long' })}`);
+      return;
+    }
+
+    try {
+      const data = await apiGet(`/api/doctors/${doctor.id}/available-slots?date=${selectedDate}`);
+      setAvailableSlots(data.slots || []);
+      setSlotMessage(data.message || '');
+      if (!(data.slots || []).includes(selectedTime)) {
+        setSelectedTime('');
+      }
+    } catch (error) {
+      setAvailableSlots([]);
+      setSlotMessage(error.message || 'Failed to load available slots.');
+    }
+  }, [doctor.id, isDateAvailable, selectedDate, selectedTime]);
 
   useEffect(() => {
     if (selectedDate) {
       fetchAvailableSlots();
     }
-  }, [selectedDate]);
+  }, [selectedDate, fetchAvailableSlots]);
 
-  const fetchAvailableSlots = async () => {
-    const token = localStorage.getItem('token');
-    try {
-      const response = await fetch(
-        `${API_URL}/api/doctors/${doctor.id}/available-slots?date=${selectedDate}`,
-        {
-          headers: { 'Authorization': `Bearer ${token}` }
-        }
-      );
-      if (response.ok) {
-        const data = await response.json();
-        setAvailableSlots(data.slots || []);
-      }
-    } catch (error) {
-      console.error('Error fetching slots:', error);
-    }
+  const handleDateChange = (dateValue) => {
+    setSelectedDate(dateValue);
+    setSelectedTime('');
+    setAvailableSlots([]);
+    setSlotMessage('');
+    setError(null);
   };
 
   const handleSubmit = async (e) => {
@@ -40,37 +68,27 @@ function AppointmentBooking({ doctor, onClose, onSuccess }) {
     setLoading(true);
     setError(null);
 
-    const token = localStorage.getItem('token');
+    if (!isDateAvailable(selectedDate)) {
+      setError(`Doctor is not available on ${new Date(`${selectedDate}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long' })}`);
+      setLoading(false);
+      return;
+    }
 
     try {
-      const response = await fetch(`${API_URL}/api/appointments`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          doctor_id: doctor.id,
-          appointment_date: selectedDate,
-          appointment_time: selectedTime,
-          symptoms,
-          notes
-        })
+      await apiPost('/api/appointments', {
+        doctor_id: doctor.id,
+        appointment_date: selectedDate,
+        appointment_time: selectedTime,
+        symptoms,
+        notes
       });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setSuccess(true);
-        setTimeout(() => {
-          onSuccess && onSuccess();
-          onClose();
-        }, 2000);
-      } else {
-        setError(data.error || 'Failed to book appointment');
-      }
+      setSuccess(true);
+      setTimeout(() => {
+        onSuccess && onSuccess();
+        onClose();
+      }, 2000);
     } catch (err) {
-      setError('Network error. Please try again.');
+      setError(err.message || 'Failed to book appointment. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -112,7 +130,7 @@ function AppointmentBooking({ doctor, onClose, onSuccess }) {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="appointment-form">
-            {error && <div className="error-message">{error}</div>}
+            <Alert type="error">{error}</Alert>
 
             <div className="form-group">
               <label htmlFor="date">Select Date *</label>
@@ -120,7 +138,7 @@ function AppointmentBooking({ doctor, onClose, onSuccess }) {
                 type="date"
                 id="date"
                 value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
+                onChange={(e) => handleDateChange(e.target.value)}
                 min={getMinDate()}
                 max={getMaxDate()}
                 required
@@ -130,13 +148,18 @@ function AppointmentBooking({ doctor, onClose, onSuccess }) {
                   Available on: {doctor.available_days.join(', ')}
                 </small>
               )}
+              {selectedDateUnavailable && (
+                <small className="error-text">
+                  Doctor is not available on {new Date(`${selectedDate}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long' })}
+                </small>
+              )}
             </div>
 
             {selectedDate && (
               <div className="form-group">
                 <label htmlFor="time">Select Time Slot *</label>
                 {availableSlots.length === 0 ? (
-                  <p className="no-slots">No available slots for this date</p>
+                  <p className="no-slots">{slotMessage || 'No available slots for this date'}</p>
                 ) : (
                   <div className="time-slots">
                     {availableSlots.map(slot => (
@@ -188,9 +211,9 @@ function AppointmentBooking({ doctor, onClose, onSuccess }) {
               <button 
                 type="submit" 
                 className="btn btn-primary"
-                disabled={loading || !selectedDate || !selectedTime}
+                disabled={loading || !selectedDate || !selectedTime || selectedDateUnavailable}
               >
-                {loading ? 'Booking...' : 'Confirm Booking'}
+                {loading ? <Spinner label="Booking..." inline /> : 'Confirm Booking'}
               </button>
             </div>
           </form>

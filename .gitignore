@@ -76,9 +76,29 @@ frontend/coverage/
 # Logs
 *.log
 logs/
+launcher.log
+frontend/run-frontend.log
+backend/logs/
+backend/backups/
+backend/instance/
 pip-log.txt
 pip-delete-this-directory.txt
+
+# Generated screenshots/artifacts
+Screenshots/
+frontend/test-results/
+htmlcov/
+.coverage
 
 # OS
 Thumbs.db
 .DS_Store
+~$*
+
+# Doc processing temp files
+.doc_python_packages/
+doc_generated_assets/
+doc_image_extract/
+doc_rendered_project/
+doc_tables_shapes.txt
+project_outline.txt

@@ -1,26 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { API_URL } from '../config';
+import { apiGet } from '../utils/apiClient';
+import { Alert, EmptyState, Spinner } from './ui';
 
 function SearchHistory({ onLocationSelect }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     fetchHistory();
   }, []);
 
   const fetchHistory = async () => {
-    const token = localStorage.getItem('token');
+    setError('');
     try {
-      const response = await fetch(`${API_URL}/api/search-history?limit=20`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      const data = await response.json();
+      const data = await apiGet('/api/search-history?limit=20');
       setHistory(data);
     } catch (error) {
-      console.error('Error fetching history:', error);
+      setError(error.message || 'Failed to load search history.');
+      setHistory([]);
     } finally {
       setLoading(false);
     }
@@ -28,21 +26,20 @@ function SearchHistory({ onLocationSelect }) {
 
   if (loading) {
     return (
-      <div className="loading">
-        <div className="spinner"></div>
-        <p>Loading search history...</p>
-      </div>
+      <Spinner label="Loading search history..." />
     );
   }
 
   return (
     <div className="hospitals-list">
       <h2>Recent Searches ({history.length})</h2>
+      <Alert type="error">{error}</Alert>
       
       {history.length === 0 ? (
-        <div className="info">
-          <p>No search history yet. Start searching for hospitals!</p>
-        </div>
+        <EmptyState
+          title="No search history yet"
+          description="Start searching for hospitals and your recent searches will appear here."
+        />
       ) : (
         history.map((item) => (
           <div key={item.id} className="hospital-card">

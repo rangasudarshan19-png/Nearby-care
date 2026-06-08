@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import '../styles/Auth.css';
-import { API_URL } from '../config';
+import { apiPost } from '../utils/apiClient';
+import { Alert } from '../components/ui';
 
 function Login({ onLogin }) {
   const [formData, setFormData] = useState({
@@ -25,36 +26,22 @@ function Login({ onLogin }) {
     setLoading(true);
 
     try {
-      const response = await fetch(`${API_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(formData)
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        onLogin(data.token, data.user);
-        // Redirect admins to admin panel, regular users to dashboard
-        if (data.user.role === 'admin') {
-          navigate('/admin');
-        } else {
-          navigate('/dashboard');
-        }
+      const data = await apiPost('/api/auth/login', formData);
+      onLogin(data.token, data.user);
+      if (data.user.role === 'admin') {
+        navigate('/admin');
       } else {
-        setError(data.error || 'Login failed');
+        navigate('/dashboard');
       }
     } catch (err) {
-      setError('Network error. Please try again.');
+      setError(err.message || 'Network error. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="auth-container">
+    <div className="auth-container" style={{backgroundImage: 'url(/images/auth-bg.png)'}}>
       <div className="auth-card">
         <div className="auth-header">
           <div className="logo">
@@ -68,7 +55,7 @@ function Login({ onLogin }) {
           <p>Sign in to access your healthcare dashboard</p>
         </div>
 
-        {error && <div className="error-message">{error}</div>}
+        <Alert type="error">{error}</Alert>
 
         <form onSubmit={handleSubmit} className="auth-form">
           <div className="form-group">
@@ -103,6 +90,7 @@ function Login({ onLogin }) {
         </form>
 
         <div className="auth-footer">
+          <p><Link to="/forgot-password">Forgot password?</Link></p>
           <p>Don't have an account? <Link to="/signup">Sign up</Link></p>
           <p><Link to="/">Back to Home</Link></p>
         </div>

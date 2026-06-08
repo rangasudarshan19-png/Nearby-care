@@ -5,6 +5,8 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+os.environ['FLASK_ENV'] = 'testing'
+
 from app import app, db
 from config import config
 
@@ -27,7 +29,7 @@ def auth_headers(client):
     register_data = {
         'username': 'testuser',
         'email': 'test@example.com',
-        'password': 'testpass123'
+        'password': 'Testpass123!'
     }
     client.post('/api/auth/signup', json=register_data)
     
@@ -41,7 +43,7 @@ def auth_headers(client):
     # Login
     login_data = {
         'email': 'test@example.com',
-        'password': 'testpass123'
+        'password': 'Testpass123!'
     }
     response = client.post('/api/auth/login', json=login_data)
     token = response.json['token']

@@ -12,20 +12,40 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import requests
 from functools import wraps
-import cohere
-import google.generativeai as genai
 import json
 import logging
+import re
 from logging.handlers import RotatingFileHandler
-from sqlalchemy import func
+from sqlalchemy import func, or_, inspect, text
+from sqlalchemy.exc import IntegrityError
 from config import config
+
+try:
+    import cohere
+except ImportError as exc:
+    cohere = None
+    COHERE_IMPORT_ERROR = str(exc)
+else:
+    COHERE_IMPORT_ERROR = None
+
+try:
+    import google.generativeai as genai
+except ImportError as exc:
+    genai = None
+    GEMINI_IMPORT_ERROR = str(exc)
+else:
+    GEMINI_IMPORT_ERROR = None
 
 # Get environment (default to development)
 env = os.getenv('FLASK_ENV', 'development')
+config_class = config.get(env, config['default'])
+
+if env == 'production' and hasattr(config_class, 'validate'):
+    config_class.validate()
 
 # Initialize Flask app with config
 app = Flask(__name__)
-app.config.from_object(config[env])
+app.config.from_object(config_class)
 
 # Setup logging
 if not os.path.exists('logs'):
@@ -44,11 +64,18 @@ app.logger.addHandler(file_handler)
 app.logger.setLevel(getattr(logging, app.config['LOG_LEVEL']))
 
 # Initialize AI APIs from config
-COHERE_API_KEY = app.config.get('COHERE_API_KEY') or 'QoZJbghtZ8xKrATjrDfhVckWcE7hIOv4Gt8p9STV'
-GEMINI_API_KEY = app.config.get('GOOGLE_API_KEY') or 'AIzaSyChPE050NNk3jakECiS-MK4PxrBzZJXcHg'
+COHERE_API_KEY = app.config.get('COHERE_API_KEY')
+GEMINI_API_KEY = app.config.get('GOOGLE_API_KEY')
+NVIDIA_API_KEY = app.config.get('NVIDIA_API_KEY')
+NVIDIA_NIM_MODEL = app.config.get('NVIDIA_NIM_MODEL')
+NVIDIA_NIM_URL = app.config.get('NVIDIA_NIM_URL')
+NVIDIA_NIM_TIMEOUT_SECONDS = app.config.get('NVIDIA_NIM_TIMEOUT_SECONDS')
+NVIDIA_NIM_MAX_TOKENS = app.config.get('NVIDIA_NIM_MAX_TOKENS')
+NVIDIA_NIM_TARGET_CHARS = app.config.get('NVIDIA_NIM_TARGET_CHARS')
 
-co = cohere.Client(COHERE_API_KEY)
-genai.configure(api_key=GEMINI_API_KEY)
+co = cohere.Client(COHERE_API_KEY) if COHERE_API_KEY and cohere else None
+if GEMINI_API_KEY and genai:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 app.logger.info(f'Starting Flask server in {env} mode...')
 
@@ -154,6 +181,16 @@ class Appointment(db.Model):
     deletion_reason = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (
+        db.Index(
+            'ix_unique_scheduled_appointment_slot',
+            'doctor_id',
+            'appointment_date',
+            'appointment_time',
+            unique=True,
+            sqlite_where=text("status = 'scheduled'")
+        ),
+    )
 
 class UserProfile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -199,33 +236,6 @@ class Announcement(db.Model):
     delivery_count = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-class DoctorProfile(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(255), nullable=False)
-    specialty = db.Column(db.String(100), nullable=False)
-    hospital_name = db.Column(db.String(255))
-    hospital_address = db.Column(db.Text)
-    qualification = db.Column(db.String(255))
-    experience_years = db.Column(db.Integer)
-    consultation_fee = db.Column(db.Float)
-    phone = db.Column(db.String(20))
-    email = db.Column(db.String(255))
-    bio = db.Column(db.Text)
-    verified = db.Column(db.Boolean, default=False)
-    rating = db.Column(db.Float, default=0.0)
-    total_reviews = db.Column(db.Integer, default=0)
-    is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-class DoctorAvailability(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    doctor_id = db.Column(db.Integer, nullable=False)
-    day_of_week = db.Column(db.Integer, nullable=False)  # 0=Monday, 6=Sunday
-    start_time = db.Column(db.String(10), nullable=False)  # "09:00"
-    end_time = db.Column(db.String(10), nullable=False)  # "17:00"
-    slot_duration = db.Column(db.Integer, default=30)  # minutes
-    is_available = db.Column(db.Boolean, default=True)
 
 class SystemSetting(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -240,99 +250,369 @@ def generate_otp():
     return ''.join(random.choices(string.digits, k=6))
 
 
-def send_email(to_email, otp):
-    try:
-        # Read SMTP credentials from config
-        sender = app.config['SMTP_SENDER']
-        password = app.config['SMTP_APP_PASSWORD']
+def safe_error_response(log_message, exc=None, client_message='Something went wrong. Please try again.', status=500, rollback=False):
+    if rollback:
+        db.session.rollback()
+    if exc:
+        app.logger.error(f"{log_message}: {str(exc)}")
+    else:
+        app.logger.error(log_message)
+    return jsonify({'error': client_message}), status
 
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = "Nearby Care - Email Verification"
-        msg["From"] = sender
-        msg["To"] = to_email
-        
-        html = f"""
-        <html>
-            <body style="font-family: Arial; padding: 20px;">
-                <h2 style="color: #0ea5e9;">Nearby Care</h2>
-                <h3>Email Verification</h3>
-                <p>Your OTP code is:</p>
-                <div style="background: #0ea5e9; color: white; font-size: 32px; padding: 20px; text-align: center; border-radius: 8px;">
-                    {otp}
-                </div>
-                <p>This code expires in 10 minutes.</p>
-            </body>
-        </html>
-        """
-        
-        msg.attach(MIMEText(html, "html"))
-        
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(sender, password)
-            server.sendmail(sender, to_email, msg.as_string())
-        
+
+PASSWORD_RULE_MESSAGE = (
+    "Password must be at least 8 characters and include one uppercase letter, "
+    "one lowercase letter, one number, and one special character."
+)
+
+
+def validate_password_strength(password):
+    password = password or ''
+    if len(password) < 8:
+        return False, PASSWORD_RULE_MESSAGE
+    if not re.search(r'[A-Z]', password):
+        return False, PASSWORD_RULE_MESSAGE
+    if not re.search(r'[a-z]', password):
+        return False, PASSWORD_RULE_MESSAGE
+    if not re.search(r'\d', password):
+        return False, PASSWORD_RULE_MESSAGE
+    if not re.search(r'[^A-Za-z0-9]', password):
+        return False, PASSWORD_RULE_MESSAGE
+    return True, None
+
+
+def parse_optional_int(value, field_name, default=0):
+    if value in [None, '']:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name} must be a valid whole number")
+    if parsed < 0:
+        raise ValueError(f"{field_name} cannot be negative")
+    return parsed
+
+
+def parse_optional_float(value, field_name, default=0.0, minimum=0.0, maximum=None):
+    if value in [None, '']:
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name} must be a valid number")
+    if parsed < minimum:
+        raise ValueError(f"{field_name} cannot be less than {minimum}")
+    if maximum is not None and parsed > maximum:
+        raise ValueError(f"{field_name} cannot be greater than {maximum}")
+    return parsed
+
+
+def doctor_to_dict(doctor):
+    return {
+        'id': doctor.id,
+        'name': doctor.name,
+        'specialty': doctor.specialty,
+        'qualifications': doctor.qualifications,
+        'experience_years': doctor.experience_years,
+        'consultation_fee': doctor.consultation_fee,
+        'hospital_id': doctor.hospital_id,
+        'hospital_name': doctor.hospital_name,
+        'email': doctor.email,
+        'phone': doctor.phone,
+        'bio': doctor.bio,
+        'rating': doctor.rating,
+        'available_days': json.loads(doctor.available_days) if doctor.available_days else [],
+        'available_hours': doctor.available_hours,
+        'created_at': doctor.created_at.isoformat() if doctor.created_at else None
+    }
+
+
+def get_doctor_available_days(doctor):
+    if not doctor.available_days:
+        return []
+    try:
+        days = json.loads(doctor.available_days)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(days, list):
+        return []
+    return [str(day).strip() for day in days if str(day).strip()]
+
+
+def is_doctor_available_on_date(doctor, appointment_date):
+    available_days = get_doctor_available_days(doctor)
+    if not available_days:
         return True
-    except Exception as e:
-        print(f"Email error: {e}")
+    selected_day = appointment_date.strftime('%a')
+    normalized = {day[:3].title() for day in available_days}
+    return selected_day in normalized
+
+
+def generate_doctor_slots(doctor):
+    if not doctor.available_hours:
+        return []
+
+    try:
+        start_time, end_time = doctor.available_hours.split('-')
+        start_hour = int(start_time.split(':')[0])
+        end_hour = int(end_time.split(':')[0])
+    except (TypeError, ValueError):
+        return []
+
+    if start_hour < 0 or end_hour > 24 or start_hour >= end_hour:
+        return []
+
+    slots = []
+    for hour in range(start_hour, end_hour):
+        slots.append(f"{hour:02d}:00")
+        slots.append(f"{hour:02d}:30")
+    return slots
+
+
+SAMPLE_DOCTORS_SEED_MARKER = 'sample_doctors_seeded_v1'
+
+
+def mark_sample_doctors_seeded():
+    marker = SystemSetting.query.filter_by(key=SAMPLE_DOCTORS_SEED_MARKER).first()
+    if not marker:
+        db.session.add(SystemSetting(
+            key=SAMPLE_DOCTORS_SEED_MARKER,
+            value='true',
+            description='Sample doctors were seeded or already present once; do not recreate after deletion.'
+        ))
+
+
+def should_seed_sample_doctors():
+    marker = SystemSetting.query.filter_by(key=SAMPLE_DOCTORS_SEED_MARKER).first()
+    if marker:
         return False
 
-def send_otp_email(to_email, otp, purpose='signup'):
-    """Send OTP email for various purposes"""
-    try:
-        sender = app.config['SMTP_SENDER']
-        password = app.config['SMTP_APP_PASSWORD']
+    if Doctor.query.count() > 0:
+        mark_sample_doctors_seeded()
+        db.session.commit()
+        return False
 
-        # Customize subject and title based on purpose
-        if purpose == 'email_verification':
-            subject = "Nearby Care - Email Change Verification"
-            title = "Email Change Verification"
-            message = "You requested to change your email address. Use this OTP to verify your new email:"
-        else:
-            subject = "Nearby Care - Email Verification"
-            title = "Email Verification"
-            message = "Your OTP code is:"
+    return True
+
+
+def get_required_table_columns():
+    return {
+        'user': {'id', 'email', 'password_hash', 'is_verified', 'is_admin', 'role', 'status'},
+        'doctor': {'id', 'name', 'specialty', 'hospital_id', 'available_days', 'available_hours'},
+        'appointment': {'id', 'user_id', 'doctor_id', 'appointment_date', 'appointment_time', 'status', 'deleted_at', 'deletion_reason'},
+        'system_setting': {'id', 'key', 'value'},
+    }
+
+
+def run_db_maintenance(create_backup=False):
+    """Idempotent local DB maintenance. Creates missing tables/indexes and validates required schema."""
+    db.create_all()
+    engine = db.engine
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    required = get_required_table_columns()
+    missing_tables = sorted(set(required) - tables)
+    missing_columns = {}
+
+    for table_name, required_columns in required.items():
+        if table_name not in tables:
+            continue
+        existing_columns = {column['name'] for column in inspector.get_columns(table_name)}
+        missing = sorted(required_columns - existing_columns)
+        if missing:
+            missing_columns[table_name] = missing
+
+    duplicate_groups = db.session.execute(text(
+        "SELECT doctor_id, appointment_date, appointment_time, MIN(id) AS keep_id, COUNT(*) AS slot_count "
+        "FROM appointment WHERE status = 'scheduled' "
+        "GROUP BY doctor_id, appointment_date, appointment_time HAVING COUNT(*) > 1"
+    )).mappings().all() if 'appointment' in tables else []
+
+    cancelled_duplicates = 0
+    for group in duplicate_groups:
+        result = db.session.execute(text(
+            "UPDATE appointment "
+            "SET status = 'cancelled', deleted_at = :deleted_at, deletion_reason = :reason "
+            "WHERE status = 'scheduled' "
+            "AND doctor_id = :doctor_id "
+            "AND appointment_date = :appointment_date "
+            "AND appointment_time = :appointment_time "
+            "AND id != :keep_id"
+        ), {
+            'deleted_at': datetime.utcnow(),
+            'reason': 'Duplicate scheduled slot cancelled by maintenance',
+            'doctor_id': group['doctor_id'],
+            'appointment_date': group['appointment_date'],
+            'appointment_time': group['appointment_time'],
+            'keep_id': group['keep_id']
+        })
+        cancelled_duplicates += result.rowcount or 0
+
+    # SQLite supports a partial unique index that prevents duplicate scheduled slots.
+    db.session.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_unique_scheduled_appointment_slot "
+        "ON appointment (doctor_id, appointment_date, appointment_time) "
+        "WHERE status = 'scheduled'"
+    ))
+
+    if not SystemSetting.query.filter_by(key=SAMPLE_DOCTORS_SEED_MARKER).first() and Doctor.query.count() > 0:
+        mark_sample_doctors_seeded()
+
+    db.session.commit()
+
+    return {
+        'ok': not missing_tables and not missing_columns,
+        'missing_tables': missing_tables,
+        'missing_columns': missing_columns,
+        'scheduled_slot_index': 'ensured',
+        'cancelled_duplicate_scheduled_slots': cancelled_duplicates,
+        'sample_doctors_seed_marker': bool(SystemSetting.query.filter_by(key=SAMPLE_DOCTORS_SEED_MARKER).first()),
+        'backup_created': False if not create_backup else None
+    }
+
+
+def get_preflight_status():
+    inspector = inspect(db.engine)
+    tables = set(inspector.get_table_names())
+    required = get_required_table_columns()
+    missing_tables = sorted(set(required) - tables)
+    missing_columns = {}
+
+    for table_name, required_columns in required.items():
+        if table_name not in tables:
+            continue
+        existing_columns = {column['name'] for column in inspector.get_columns(table_name)}
+        missing = sorted(required_columns - existing_columns)
+        if missing:
+            missing_columns[table_name] = missing
+
+    admin_exists = User.query.filter_by(email='admin@nearbycare.com').first() is not None
+    smtp_sender = bool(app.config.get('SMTP_SENDER'))
+    smtp_password = bool(app.config.get('SMTP_APP_PASSWORD'))
+    ai_configured = any([NVIDIA_API_KEY, GEMINI_API_KEY, COHERE_API_KEY])
+
+    return {
+        'ok': not missing_tables and not missing_columns and admin_exists,
+        'checks': {
+            'database': {
+                'tables_present': not missing_tables,
+                'missing_tables': missing_tables,
+                'missing_columns': missing_columns,
+                'scheduled_slot_index': 'configured'
+            },
+            'smtp': {
+                'sender_configured': smtp_sender,
+                'app_password_configured': smtp_password
+            },
+            'ai': {
+                'any_provider_configured': ai_configured,
+                'nvidia_nim': 'configured' if NVIDIA_API_KEY else 'not_configured',
+                'gemini': 'configured' if GEMINI_API_KEY and genai else 'unavailable',
+                'cohere': 'configured' if COHERE_API_KEY and co else 'unavailable'
+            },
+            'admin_account': {
+                'exists': admin_exists
+            },
+            'runtime': {
+                'backend_port': 5000,
+                'frontend_port': 3000
+            }
+        }
+    }
+
+
+def get_smtp_credentials():
+    sender = (app.config.get('SMTP_SENDER') or '').strip()
+    password = (app.config.get('SMTP_APP_PASSWORD') or '').replace(' ', '')
+    server = app.config.get('SMTP_SERVER') or 'smtp.gmail.com'
+    port = int(app.config.get('SMTP_PORT') or 465)
+
+    if not sender or not password:
+        raise ValueError("SMTP_SENDER and SMTP_APP_PASSWORD must be configured")
+
+    return sender, password, server, port
+
+
+def send_html_email(to_email, subject, html):
+    try:
+        if app.config.get('TESTING'):
+            return True
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
+        sender, password, smtp_server, smtp_port = get_smtp_credentials()
         msg["From"] = sender
         msg["To"] = to_email
-        
-        html = f"""
-        <html>
-            <body style="font-family: Arial; padding: 20px;">
-                <h2 style="color: #0ea5e9;">Nearby Care</h2>
-                <h3>{title}</h3>
-                <p>{message}</p>
-                <div style="background: #0ea5e9; color: white; font-size: 32px; padding: 20px; text-align: center; border-radius: 8px;">
-                    {otp}
-                </div>
-                <p>This code expires in 10 minutes.</p>
-            </body>
-        </html>
-        """
-        
         msg.attach(MIMEText(html, "html"))
-        
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(sender, password)
-            server.sendmail(sender, to_email, msg.as_string())
+
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=20) as server:
+                server.login(sender, password)
+                server.sendmail(sender, to_email, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_server, smtp_port, timeout=20) as server:
+                server.starttls()
+                server.login(sender, password)
+                server.sendmail(sender, to_email, msg.as_string())
         
         return True
     except Exception as e:
-        print(f"Email error: {e}")
+        app.logger.error(f"Email error sending to {to_email}: {e}")
         return False
+
+
+def send_email(to_email, otp):
+    html = f"""
+    <html>
+        <body style="font-family: Arial; padding: 20px;">
+            <h2 style="color: #0ea5e9;">Nearby Care</h2>
+            <h3>Email Verification</h3>
+            <p>Your OTP code is:</p>
+            <div style="background: #0ea5e9; color: white; font-size: 32px; padding: 20px; text-align: center; border-radius: 8px;">
+                {otp}
+            </div>
+            <p>This code expires in 10 minutes.</p>
+        </body>
+    </html>
+    """
+
+    return send_html_email(to_email, "Nearby Care - Email Verification", html)
+
+
+def send_otp_email(to_email, otp, purpose='signup'):
+    """Send OTP email for various purposes"""
+    if purpose == 'email_verification':
+        subject = "Nearby Care - Email Change Verification"
+        title = "Email Change Verification"
+        message = "You requested to change your email address. Use this OTP to verify your new email:"
+    elif purpose == 'password_reset':
+        subject = "Nearby Care - Password Reset OTP"
+        title = "Password Reset"
+        message = "Use this OTP to reset your Nearby Care password:"
+    else:
+        subject = "Nearby Care - Email Verification"
+        title = "Email Verification"
+        message = "Your OTP code is:"
+
+    html = f"""
+    <html>
+        <body style="font-family: Arial; padding: 20px;">
+            <h2 style="color: #0ea5e9;">Nearby Care</h2>
+            <h3>{title}</h3>
+            <p>{message}</p>
+            <div style="background: #0ea5e9; color: white; font-size: 32px; padding: 20px; text-align: center; border-radius: 8px;">
+                {otp}
+            </div>
+            <p>This code expires in 10 minutes.</p>
+        </body>
+    </html>
+    """
+
+    return send_html_email(to_email, subject, html)
 
 def send_appointment_email(to_email, appointment_data):
     """Send appointment confirmation email"""
     try:
-        sender = app.config['SMTP_SENDER']
-        password = app.config['SMTP_APP_PASSWORD']
-
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = "Appointment Confirmation - Nearby Care"
-        msg["From"] = sender
-        msg["To"] = to_email
-        
         html = f"""
         <html>
             <body style="font-family: Arial; padding: 20px;">
@@ -350,17 +630,199 @@ def send_appointment_email(to_email, appointment_data):
             </body>
         </html>
         """
-        
-        msg.attach(MIMEText(html, "html"))
-        
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(sender, password)
-            server.sendmail(sender, to_email, msg.as_string())
-        
-        return True
+
+        return send_html_email(to_email, "Appointment Confirmation - Nearby Care", html)
     except Exception as e:
-        print(f"Email error: {e}")
+        app.logger.error(f"Appointment email error: {e}")
         return False
+
+
+HEALTH_ASSISTANT_SYSTEM_PROMPT = """You are an AI Health Assistant. Your role is to:
+1. Listen to the user's symptoms carefully.
+2. Ask clarifying questions if needed.
+3. Provide general health advice, not a diagnosis.
+4. If symptoms are severe or emergency-level, recommend immediate medical attention.
+5. Be empathetic and supportive.
+6. Always remind users this is not a substitute for professional medical advice.
+
+Important: Only mention emergency services or hospitals if the symptoms described are genuinely severe or life-threatening.
+
+Keep responses concise: 4 to 6 short sentences unless the user asks for detail.
+Use plain text only. Do not use markdown formatting, asterisks, or special characters for emphasis. Write in simple, clear sentences."""
+
+
+def build_health_assistant_messages(user_message, chat_history):
+    messages = [{'role': 'system', 'content': HEALTH_ASSISTANT_SYSTEM_PROMPT}]
+
+    expected_role = 'user'
+    for msg in chat_history[-6:]:
+        role = msg.get('role')
+        content = (msg.get('content') or '').strip()
+        if role == expected_role and content:
+            messages.append({'role': role, 'content': content})
+            expected_role = 'assistant' if role == 'user' else 'user'
+
+    if len(messages) > 1 and messages[-1]['role'] == 'user':
+        messages.pop()
+
+    messages.append({'role': 'user', 'content': user_message})
+    return messages
+
+
+def generate_health_response_with_nvidia(user_message, chat_history):
+    if not NVIDIA_API_KEY:
+        raise RuntimeError("NVIDIA API key is not configured")
+
+    payload = {
+        'model': NVIDIA_NIM_MODEL,
+        'messages': build_health_assistant_messages(user_message, chat_history),
+        'max_tokens': NVIDIA_NIM_MAX_TOKENS,
+        'temperature': 0.5,
+        'top_p': 1,
+        'frequency_penalty': 0.0,
+        'presence_penalty': 0.0,
+        'stream': True
+    }
+    headers = {
+        'Authorization': f'Bearer {NVIDIA_API_KEY}',
+        'Accept': 'text/event-stream',
+        'Content-Type': 'application/json'
+    }
+
+    response = requests.post(
+        NVIDIA_NIM_URL,
+        headers=headers,
+        json=payload,
+        stream=True,
+        timeout=(5, NVIDIA_NIM_TIMEOUT_SECONDS)
+    )
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        safe_detail = response.text[:500] if response.text else str(exc)
+        raise RuntimeError(f"NVIDIA NIM request failed: {safe_detail}") from exc
+
+    chunks = []
+    for raw_line in response.iter_lines():
+        if not raw_line:
+            continue
+        line = raw_line.decode('utf-8').strip()
+        if not line.startswith('data:'):
+            continue
+
+        event_data = line[5:].strip()
+        if event_data == '[DONE]':
+            break
+
+        try:
+            data = json.loads(event_data)
+        except json.JSONDecodeError:
+            continue
+
+        choices = data.get('choices') or []
+        if not choices:
+            continue
+
+        delta = choices[0].get('delta') or {}
+        content_piece = delta.get('content')
+        if content_piece:
+            chunks.append(content_piece)
+            current = ''.join(chunks).strip()
+            if len(current) >= NVIDIA_NIM_TARGET_CHARS and current[-1:] in ['.', '!', '?']:
+                response.close()
+                break
+
+    content = ''.join(chunks).strip()
+    if not content:
+        raise RuntimeError("Empty response from NVIDIA NIM")
+    return content.replace('**', '').replace('*', '')
+
+
+def generate_health_response_with_gemini(user_message, chat_history):
+    if not GEMINI_API_KEY:
+        raise RuntimeError("Gemini API key is not configured")
+    if not genai:
+        raise RuntimeError(f"Gemini SDK is unavailable: {GEMINI_IMPORT_ERROR}")
+
+    conversation_text = ""
+    for msg in chat_history[-6:]:
+        if msg.get('role') == 'user':
+            conversation_text += f"User: {msg.get('content')}\n"
+        elif msg.get('role') == 'assistant':
+            conversation_text += f"Assistant: {msg.get('content')}\n"
+
+    full_prompt = HEALTH_ASSISTANT_SYSTEM_PROMPT + "\n\n"
+    if conversation_text:
+        full_prompt += f"Previous conversation:\n{conversation_text}\n"
+    full_prompt += f"User: {user_message}\nAssistant:"
+
+    model = genai.GenerativeModel('gemini-flash-latest')
+    response = model.generate_content(full_prompt)
+    ai_response = response.text.strip()
+    if not ai_response:
+        raise RuntimeError("Empty response from Gemini")
+    return ai_response.replace('**', '').replace('*', '')
+
+
+def generate_local_health_response(user_message):
+    message = user_message.lower()
+    emergency_terms = [
+        'chest pain', 'difficulty breathing', 'shortness of breath', 'unconscious',
+        'seizure', 'stroke', 'heart attack', 'vomiting blood', 'severe bleeding',
+        'collapsed', 'paralyzed'
+    ]
+    fever_terms = ['fever', 'temperature', 'chills']
+    stomach_terms = ['stomach', 'vomit', 'nausea', 'diarrhea', 'abdominal']
+    headache_terms = ['headache', 'migraine', 'head pain']
+
+    if any(term in message for term in emergency_terms):
+        return (
+            "Your symptoms may need urgent medical attention. Please call emergency services "
+            "or go to the nearest emergency department now. If someone is with you, ask them "
+            "to help you travel safely. Do not drive yourself if you feel faint, weak, confused, "
+            "or short of breath."
+        )
+
+    if any(term in message for term in fever_terms):
+        return (
+            "Fever can happen with many infections or inflammatory conditions. Rest, drink fluids, "
+            "and monitor your temperature. Seek medical care urgently if the fever is very high, "
+            "lasts more than 3 days, comes with breathing trouble, chest pain, confusion, stiff neck, "
+            "rash, severe weakness, or dehydration."
+        )
+
+    if any(term in message for term in stomach_terms):
+        return (
+            "Stomach symptoms are often related to infection, food irritation, acidity, or dehydration. "
+            "Drink small amounts of fluids often and avoid heavy food for now. Get medical help quickly "
+            "if you have severe pain, blood in vomit or stool, repeated vomiting, signs of dehydration, "
+            "high fever, or pain that moves to the lower right abdomen."
+        )
+
+    if any(term in message for term in headache_terms):
+        return (
+            "Headaches can come from stress, dehydration, lack of sleep, eye strain, migraine, or infection. "
+            "Rest in a quiet place, drink water, and monitor how it changes. Seek urgent help if it is sudden "
+            "and severe, follows an injury, or comes with weakness, confusion, fever, stiff neck, vision changes, "
+            "or trouble speaking."
+        )
+
+    return (
+        "I can help you think through this, but I need a few more details. When did it start, how severe is it "
+        "from 1 to 10, and do you have fever, pain, breathing trouble, vomiting, bleeding, dizziness, or any "
+        "long-term medical conditions? If symptoms feel severe or are getting worse, please contact a healthcare "
+        "professional promptly."
+    )
+
+
+def delete_user_related_records(user):
+    Appointment.query.filter_by(user_id=user.id).delete()
+    Review.query.filter_by(user_id=user.id).delete()
+    Favorite.query.filter_by(user_id=user.id).delete()
+    SearchHistory.query.filter_by(user_id=user.id).delete()
+    UserProfile.query.filter_by(user_id=user.id).delete()
+    MedicalRecord.query.filter_by(user_id=user.id).delete()
+    OTP.query.filter_by(email=user.email).delete()
 
 def token_required(f):
     @wraps(f)
@@ -626,6 +1088,11 @@ RESPOND ONLY WITH JSON (no markdown, no extra text):
 
 Score all {len(hospitals_data)} hospitals."""
 
+        if not GEMINI_API_KEY:
+            raise RuntimeError("Gemini API key is not configured")
+        if not genai:
+            raise RuntimeError(f"Gemini SDK is unavailable: {GEMINI_IMPORT_ERROR}")
+
         # Use Gemini Pro (free tier)
         model = genai.GenerativeModel('gemini-pro')
         response = model.generate_content(prompt)
@@ -744,6 +1211,10 @@ Score ALL {len(hospitals_data)} hospitals. Use 0-100 where:
 - 60-79: Good match, can treat this
 - 40-59: General facility, may help
 - 0-39: Not suitable for these symptoms"""
+
+        if not co:
+            print("Cohere API key is not configured, falling back to keyword matching")
+            return keyword_based_matching(symptoms, hospitals_data)
 
         print("Calling Cohere API with command model...")
         
@@ -1345,13 +1816,28 @@ def signup():
         
         if not all([username, email, password]):
             return jsonify({'error': 'All fields required'}), 400
+
+        password_ok, password_error = validate_password_strength(password)
+        if not password_ok:
+            return jsonify({'error': password_error}), 400
         
-        # Check existing
-        if User.query.filter(func.lower(User.email) == email).first():
-            return jsonify({'error': 'Email already registered'}), 400
+        # Keep verified accounts protected, but clear stale unverified accounts
+        # so users can retry signup when OTP email delivery failed or expired.
+        existing_email_user = User.query.filter(func.lower(User.email) == email).first()
+        if existing_email_user:
+            if existing_email_user.is_verified:
+                return jsonify({'error': 'Email already registered'}), 400
+            delete_user_related_records(existing_email_user)
+            db.session.delete(existing_email_user)
+            db.session.flush()
         
-        if User.query.filter_by(username=username).first():
-            return jsonify({'error': 'Username already taken'}), 400
+        existing_username_user = User.query.filter_by(username=username).first()
+        if existing_username_user:
+            if existing_username_user.is_verified:
+                return jsonify({'error': 'Username already taken'}), 400
+            delete_user_related_records(existing_username_user)
+            db.session.delete(existing_username_user)
+            db.session.flush()
         
         # Hash password
         password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -1367,10 +1853,14 @@ def signup():
         
         otp = OTP(email=email, otp_code=otp_code, expires_at=expires_at)
         db.session.add(otp)
-        db.session.commit()
         
         # Send email
         email_sent = send_email(email, otp_code)
+        if not email_sent:
+            db.session.rollback()
+            return jsonify({'error': 'Failed to send OTP. Please check your email address and try again.'}), 502
+
+        db.session.commit()
         
         # Log OTP for debugging when email fails
         if not email_sent:
@@ -1379,16 +1869,15 @@ def signup():
             print(f"{'='*50}\n")
         
         return jsonify({
-            'message': 'Registration successful! Check your email for OTP.' if email_sent else 'Registration successful! Check console for OTP (email failed).',
+            'message': 'Registration successful! Check your email for OTP.',
             'email': email,
-            'otp_debug': otp_code,
             'email_sent': email_sent
         }), 201
         
     except Exception as e:
         db.session.rollback()
         print(f"Signup error: {e}")
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 @app.route('/api/auth/verify-otp', methods=['POST'])
 def verify_otp():
@@ -1437,13 +1926,13 @@ def verify_otp():
     except Exception as e:
         db.session.rollback()
         print(f"Verify error: {e}")
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 @app.route('/api/auth/resend-otp', methods=['POST'])
 def resend_otp():
     try:
         data = request.json
-        email = data.get('email')
+        email = (data.get('email') or '').strip().lower()
         
         if not email:
             return jsonify({'error': 'Email required'}), 400
@@ -1458,20 +1947,128 @@ def resend_otp():
         
         otp = OTP(email=email, otp_code=otp_code, expires_at=expires_at)
         db.session.add(otp)
-        db.session.commit()
         
         # Send email
-        send_email(email, otp_code)
+        email_sent = send_email(email, otp_code)
+        if not email_sent:
+            db.session.rollback()
+            return jsonify({'error': 'Failed to send OTP. Please try again.'}), 502
+
+        db.session.commit()
         
         return jsonify({
             'message': 'OTP resent successfully!',
-            'otp_debug': otp_code
+            'email_sent': email_sent
         }), 200
         
     except Exception as e:
         db.session.rollback()
         print(f"Resend error: {e}")
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
+
+
+@app.route('/api/auth/forgot-password/request', methods=['POST'])
+def forgot_password_request():
+    try:
+        data = request.json or {}
+        email = (data.get('email') or '').strip().lower()
+
+        if not email:
+            return jsonify({'error': 'Email required'}), 400
+
+        user = User.query.filter(func.lower(User.email) == email).first()
+        if not user or not user.is_verified:
+            return jsonify({'error': 'No verified account found for this email'}), 404
+        if user.status != 'active':
+            return jsonify({'error': f'Account is {user.status}'}), 403
+
+        OTP.query.filter_by(email=email, is_used=False).delete()
+        otp_code = generate_otp()
+        otp = OTP(
+            email=email,
+            otp_code=otp_code,
+            expires_at=datetime.utcnow() + timedelta(minutes=10)
+        )
+        db.session.add(otp)
+
+        email_sent = send_otp_email(email, otp_code, purpose='password_reset')
+        if not email_sent:
+            db.session.rollback()
+            return jsonify({'error': 'Failed to send OTP. Please try again.'}), 502
+
+        db.session.commit()
+        return jsonify({'message': 'Password reset OTP sent successfully'}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Forgot password request error: {str(e)}")
+        return safe_error_response('Unhandled request error', e)
+
+
+@app.route('/api/auth/forgot-password/verify', methods=['POST'])
+def forgot_password_verify():
+    try:
+        data = request.json or {}
+        email = (data.get('email') or '').strip().lower()
+        otp_code = (data.get('otp') or '').strip()
+
+        if not email or not otp_code:
+            return jsonify({'error': 'Email and OTP required'}), 400
+
+        otp = OTP.query.filter_by(
+            email=email,
+            otp_code=otp_code,
+            is_used=False
+        ).filter(OTP.expires_at > datetime.utcnow()).first()
+
+        if not otp:
+            return jsonify({'error': 'Invalid or expired OTP'}), 400
+
+        return jsonify({'message': 'OTP verified successfully'}), 200
+
+    except Exception as e:
+        app.logger.error(f"Forgot password verify error: {str(e)}")
+        return safe_error_response('Unhandled request error', e)
+
+
+@app.route('/api/auth/forgot-password/reset', methods=['POST'])
+def forgot_password_reset():
+    try:
+        data = request.json or {}
+        email = (data.get('email') or '').strip().lower()
+        otp_code = (data.get('otp') or '').strip()
+        new_password = data.get('new_password') or ''
+
+        if not email or not otp_code or not new_password:
+            return jsonify({'error': 'Email, OTP, and new password required'}), 400
+
+        password_ok, password_error = validate_password_strength(new_password)
+        if not password_ok:
+            return jsonify({'error': password_error}), 400
+
+        user = User.query.filter(func.lower(User.email) == email).first()
+        if not user or not user.is_verified:
+            return jsonify({'error': 'No verified account found for this email'}), 404
+
+        otp = OTP.query.filter_by(
+            email=email,
+            otp_code=otp_code,
+            is_used=False
+        ).filter(OTP.expires_at > datetime.utcnow()).first()
+
+        if not otp:
+            return jsonify({'error': 'Invalid or expired OTP'}), 400
+
+        user.password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        otp.is_used = True
+        db.session.commit()
+
+        return jsonify({'message': 'Password updated successfully'}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Forgot password reset error: {str(e)}")
+        return safe_error_response('Unhandled request error', e)
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
@@ -1522,7 +2119,7 @@ def login():
         
     except Exception as e:
         print(f"Login error: {e}")
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 @app.route('/api/auth/me', methods=['GET'])
 @token_required
@@ -1532,7 +2129,8 @@ def get_current_user(current_user):
             'id': current_user.id,
             'username': current_user.username,
             'email': current_user.email,
-            'is_admin': current_user.is_admin
+            'is_admin': current_user.is_admin,
+            'role': current_user.role
         }
     }), 200
 
@@ -1558,22 +2156,7 @@ def get_doctors(current_user):
     doctors = query.all()
     
     return jsonify({
-        'doctors': [{
-            'id': d.id,
-            'name': d.name,
-            'specialty': d.specialty,
-            'qualifications': d.qualifications,
-            'experience_years': d.experience_years,
-            'consultation_fee': d.consultation_fee,
-            'hospital_id': d.hospital_id,
-            'hospital_name': d.hospital_name,
-            'email': d.email,
-            'phone': d.phone,
-            'bio': d.bio,
-            'rating': d.rating,
-            'available_days': json.loads(d.available_days) if d.available_days else [],
-            'available_hours': d.available_hours
-        } for d in doctors]
+        'doctors': [doctor_to_dict(d) for d in doctors]
     })
 
 @app.route('/api/doctors/<int:doctor_id>', methods=['GET'])
@@ -1584,22 +2167,7 @@ def get_doctor_details(current_user, doctor_id):
     if not doctor:
         return jsonify({'error': 'Doctor not found'}), 404
     
-    return jsonify({
-        'id': doctor.id,
-        'name': doctor.name,
-        'specialty': doctor.specialty,
-        'qualifications': doctor.qualifications,
-        'experience_years': doctor.experience_years,
-        'consultation_fee': doctor.consultation_fee,
-        'hospital_id': doctor.hospital_id,
-        'hospital_name': doctor.hospital_name,
-        'email': doctor.email,
-        'phone': doctor.phone,
-        'bio': doctor.bio,
-        'rating': doctor.rating,
-        'available_days': json.loads(doctor.available_days) if doctor.available_days else [],
-        'available_hours': doctor.available_hours
-    })
+    return jsonify(doctor_to_dict(doctor))
 
 @app.route('/api/specialties', methods=['GET'])
 @token_required
@@ -1633,7 +2201,7 @@ def get_appointments(current_user):
         result.append({
             'id': apt.id,
             'doctor_id': apt.doctor_id,
-            'doctor_name': doctor.name if doctor else 'Unknown',
+            'doctor_name': doctor.name if doctor else 'Deleted doctor',
             'doctor_specialty': doctor.specialty if doctor else '',
             'hospital_id': apt.hospital_id,
             'hospital_name': apt.hospital_name,
@@ -1668,6 +2236,20 @@ def book_appointment(current_user):
         appointment_date = datetime.strptime(data['appointment_date'], '%Y-%m-%d').date()
     except ValueError:
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+    if not is_doctor_available_on_date(doctor, appointment_date):
+        available_days = get_doctor_available_days(doctor)
+        return jsonify({
+            'error': f'Doctor is not available on {appointment_date.strftime("%A")}',
+            'available_days': available_days
+        }), 400
+
+    all_slots = generate_doctor_slots(doctor)
+    if not all_slots:
+        return jsonify({'error': 'Doctor has no available appointment hours configured'}), 400
+
+    if data['appointment_time'] not in all_slots:
+        return jsonify({'error': 'Selected time is outside doctor available hours'}), 400
     
     # Check if slot is already booked
     existing = Appointment.query.filter_by(
@@ -1693,7 +2275,12 @@ def book_appointment(current_user):
     )
     
     db.session.add(appointment)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError as e:
+        db.session.rollback()
+        app.logger.warning(f"Duplicate appointment slot rejected: {str(e)}")
+        return jsonify({'error': 'This time slot is already booked'}), 400
     
     # Send confirmation email
     appointment_data = {
@@ -1799,23 +2386,26 @@ def get_available_slots(current_user, doctor_id):
     doctor = Doctor.query.get(doctor_id)
     if not doctor:
         return jsonify({'error': 'Doctor not found'}), 404
-    
-    # Parse available hours (e.g., "09:00-17:00")
-    if not doctor.available_hours:
-        return jsonify({'slots': []})
-    
-    try:
-        start_time, end_time = doctor.available_hours.split('-')
-        start_hour = int(start_time.split(':')[0])
-        end_hour = int(end_time.split(':')[0])
-    except:
-        return jsonify({'slots': []})
-    
-    # Generate hourly slots
-    all_slots = []
-    for hour in range(start_hour, end_hour):
-        all_slots.append(f"{hour:02d}:00")
-        all_slots.append(f"{hour:02d}:30")
+
+    if not is_doctor_available_on_date(doctor, appointment_date):
+        return jsonify({
+            'date': date_str,
+            'doctor_id': doctor_id,
+            'slots': [],
+            'booked_slots': [],
+            'available_days': get_doctor_available_days(doctor),
+            'message': f'Doctor is not available on {appointment_date.strftime("%A")}'
+        })
+
+    all_slots = generate_doctor_slots(doctor)
+    if not all_slots:
+        return jsonify({
+            'date': date_str,
+            'doctor_id': doctor_id,
+            'slots': [],
+            'booked_slots': [],
+            'message': 'Doctor has no available appointment hours configured'
+        })
     
     # Get booked slots
     booked_appointments = Appointment.query.filter_by(
@@ -1833,7 +2423,8 @@ def get_available_slots(current_user, doctor_id):
         'date': date_str,
         'doctor_id': doctor_id,
         'slots': available_slots,
-        'booked_slots': booked_slots
+        'booked_slots': booked_slots,
+        'available_days': get_doctor_available_days(doctor)
     })
 
 # ============================================
@@ -2012,15 +2603,15 @@ def send_email_update_otp(current_user):
         expires_at=expires_at
     )
     db.session.add(new_otp)
-    db.session.commit()
     
     # Send email
-    try:
-        send_otp_email(new_email, otp_code, purpose='email_verification')
-        return jsonify({'message': 'OTP sent to new email address'})
-    except Exception as e:
-        app.logger.error(f'Failed to send OTP email: {str(e)}')
+    email_sent = send_otp_email(new_email, otp_code, purpose='email_verification')
+    if not email_sent:
+        db.session.rollback()
         return jsonify({'error': 'Failed to send OTP. Please try again.'}), 500
+
+    db.session.commit()
+    return jsonify({'message': 'OTP sent to new email address', 'email_sent': email_sent})
 
 @app.route('/api/user/verify-email-otp', methods=['POST'])
 @token_required
@@ -2072,8 +2663,9 @@ def change_user_password(current_user):
     if not current_password or not new_password:
         return jsonify({'error': 'Current and new passwords are required'}), 400
     
-    if len(new_password) < 6:
-        return jsonify({'error': 'New password must be at least 6 characters'}), 400
+    password_ok, password_error = validate_password_strength(new_password)
+    if not password_ok:
+        return jsonify({'error': password_error}), 400
     
     # Verify current password
     if not bcrypt.checkpw(current_password.encode('utf-8'), current_user.password_hash.encode('utf-8')):
@@ -2133,14 +2725,30 @@ def health_check():
         'checks': {
             'database': db_status,
             'ai_services': {
-                'gemini': 'configured' if GEMINI_API_KEY else 'not_configured',
-                'cohere': 'configured' if COHERE_API_KEY else 'not_configured'
+                'nvidia_nim': 'configured' if NVIDIA_API_KEY else 'not_configured',
+                'nvidia_model': NVIDIA_NIM_MODEL if NVIDIA_API_KEY else None,
+                'gemini': 'configured' if GEMINI_API_KEY and genai else ('unavailable' if GEMINI_API_KEY else 'not_configured'),
+                'cohere': 'configured' if COHERE_API_KEY and cohere else ('unavailable' if COHERE_API_KEY else 'not_configured')
             }
         }
     }
     
     status_code = 200 if health_data['status'] == 'healthy' else 503
     return jsonify(health_data), status_code
+
+
+@app.route('/api/preflight', methods=['GET'])
+@admin_required()
+def preflight_check(current_user):
+    """Detailed admin-only startup and configuration checks."""
+    try:
+        status = get_preflight_status()
+        return jsonify({
+            'status': 'ready' if status['ok'] else 'needs_attention',
+            'checks': status['checks']
+        }), 200 if status['ok'] else 503
+    except Exception as e:
+        return safe_error_response('Preflight check failed', e, 'Preflight check failed')
 
 
 # ===================================
@@ -2225,7 +2833,7 @@ def get_admin_stats(current_user):
         
     except Exception as e:
         app.logger.error(f"Admin stats error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 # User Management
@@ -2279,7 +2887,7 @@ def get_all_users(current_user):
         
     except Exception as e:
         app.logger.error(f"Get users error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 @app.route('/api/admin/users/<int:user_id>', methods=['GET'], endpoint='get_user_details')
@@ -2337,7 +2945,7 @@ def get_user_details(current_user, user_id):
         
     except Exception as e:
         app.logger.error(f"Get user details error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 @app.route('/api/admin/users/<int:user_id>/role', methods=['PUT'])
@@ -2381,7 +2989,7 @@ def update_user_role(current_user, user_id):
     except Exception as e:
         app.logger.error(f"Update role error: {str(e)}")
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 @app.route('/api/admin/users/<int:user_id>/status', methods=['PUT'])
@@ -2425,7 +3033,151 @@ def update_user_status(current_user, user_id):
     except Exception as e:
         app.logger.error(f"Update status error: {str(e)}")
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
+
+
+@app.route('/api/admin/doctors', methods=['POST'])
+@admin_required()
+def admin_create_doctor(current_user):
+    """Create doctor details for a selected hospital."""
+    try:
+        data = request.json or {}
+        required_fields = ['name', 'specialty', 'hospital_id', 'hospital_name']
+        for field in required_fields:
+            if not str(data.get(field) or '').strip():
+                return jsonify({'error': f'{field.replace("_", " ").title()} is required'}), 400
+
+        available_days = data.get('available_days') or []
+        if isinstance(available_days, str):
+            available_days = [day.strip() for day in available_days.split(',') if day.strip()]
+        if not isinstance(available_days, list):
+            return jsonify({'error': 'Available days must be a list'}), 400
+
+        experience_years = parse_optional_int(data.get('experience_years'), 'Experience')
+        consultation_fee = parse_optional_float(data.get('consultation_fee'), 'Consultation fee')
+        rating = parse_optional_float(data.get('rating'), 'Rating', maximum=5.0)
+
+        doctor = Doctor(
+            name=data.get('name', '').strip(),
+            specialty=data.get('specialty', '').strip(),
+            qualifications=(data.get('qualifications') or '').strip(),
+            experience_years=experience_years,
+            consultation_fee=consultation_fee,
+            hospital_id=str(data.get('hospital_id')).strip(),
+            hospital_name=data.get('hospital_name', '').strip(),
+            email=(data.get('email') or '').strip(),
+            phone=(data.get('phone') or '').strip(),
+            bio=(data.get('bio') or '').strip(),
+            rating=rating,
+            available_days=json.dumps(available_days),
+            available_hours=(data.get('available_hours') or '').strip()
+        )
+
+        db.session.add(doctor)
+        db.session.commit()
+
+        log_admin_action(
+            current_user.id,
+            'create_doctor',
+            'doctor',
+            doctor.id,
+            {'doctor_name': doctor.name, 'hospital_id': doctor.hospital_id, 'hospital_name': doctor.hospital_name}
+        )
+
+        return jsonify({
+            'message': 'Doctor added successfully',
+            'doctor': doctor_to_dict(doctor)
+        }), 201
+
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        app.logger.error(f"Create doctor error: {str(e)}")
+        db.session.rollback()
+        return safe_error_response('Unhandled request error', e)
+
+
+@app.route('/api/admin/doctors', methods=['GET'])
+@admin_required()
+def admin_list_doctors(current_user):
+    """List doctors for admin management."""
+    try:
+        search = (request.args.get('search') or '').strip()
+        hospital_id = (request.args.get('hospital_id') or '').strip()
+        specialty = (request.args.get('specialty') or '').strip()
+
+        query = Doctor.query
+        if hospital_id:
+            query = query.filter_by(hospital_id=hospital_id)
+        if specialty:
+            query = query.filter(Doctor.specialty.ilike(f'%{specialty}%'))
+        if search:
+            pattern = f'%{search}%'
+            query = query.filter(
+                or_(
+                    Doctor.name.ilike(pattern),
+                    Doctor.specialty.ilike(pattern),
+                    Doctor.hospital_name.ilike(pattern)
+                )
+            )
+
+        doctors = query.order_by(Doctor.created_at.desc(), Doctor.id.desc()).all()
+        log_admin_action(current_user.id, 'list_doctors', details={'search': search, 'hospital_id': hospital_id})
+
+        return jsonify({'doctors': [doctor_to_dict(doctor) for doctor in doctors]}), 200
+
+    except Exception as e:
+        app.logger.error(f"List doctors error: {str(e)}")
+        return safe_error_response('Unhandled request error', e)
+
+
+@app.route('/api/admin/doctors/<int:doctor_id>', methods=['DELETE'])
+@admin_required()
+def admin_delete_doctor(current_user, doctor_id):
+    """Hard delete a doctor and cancel future scheduled appointments."""
+    try:
+        doctor = Doctor.query.get_or_404(doctor_id)
+        doctor_snapshot = doctor_to_dict(doctor)
+        now_date = datetime.utcnow().date()
+
+        future_appointments = Appointment.query.filter(
+            Appointment.doctor_id == doctor.id,
+            Appointment.status == 'scheduled',
+            Appointment.appointment_date >= now_date
+        ).all()
+
+        for appointment in future_appointments:
+            appointment.status = 'cancelled'
+            appointment.deleted_by = current_user.id
+            appointment.deleted_at = datetime.utcnow()
+            appointment.deletion_reason = 'Doctor removed by admin'
+
+        db.session.delete(doctor)
+        db.session.commit()
+
+        log_admin_action(
+            current_user.id,
+            'delete_doctor',
+            'doctor',
+            doctor_id,
+            {
+                'doctor_name': doctor_snapshot['name'],
+                'hospital_id': doctor_snapshot['hospital_id'],
+                'hospital_name': doctor_snapshot['hospital_name'],
+                'cancelled_appointments': len(future_appointments)
+            }
+        )
+
+        return jsonify({
+            'message': 'Doctor deleted successfully',
+            'cancelled_appointments': len(future_appointments)
+        }), 200
+
+    except Exception as e:
+        app.logger.error(f"Delete doctor error: {str(e)}")
+        db.session.rollback()
+        return safe_error_response('Unhandled request error', e)
 
 
 @app.route('/api/admin/users/<int:user_id>', methods=['DELETE'], endpoint='delete_user')
@@ -2444,11 +3196,7 @@ def delete_user(current_user, user_id):
         user_username = user.username
         
         # Delete related records
-        Appointment.query.filter_by(user_id=user_id).delete()
-        Review.query.filter_by(user_id=user_id).delete()
-        Favorite.query.filter_by(user_id=user_id).delete()
-        SearchHistory.query.filter_by(user_id=user_id).delete()
-        OTP.query.filter_by(email=user_email).delete()
+        delete_user_related_records(user)
         
         # Delete the user
         db.session.delete(user)
@@ -2469,7 +3217,7 @@ def delete_user(current_user, user_id):
     except Exception as e:
         app.logger.error(f"Delete user error: {str(e)}")
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 # Appointment Management
@@ -2497,11 +3245,15 @@ def get_all_appointments(current_user):
         
         log_admin_action(current_user.id, 'list_appointments', details={'page': page})
         
-        return jsonify({
-            'appointments': [{
+        appointment_rows = []
+        for a in appointments.items:
+            doctor = Doctor.query.get(a.doctor_id)
+            appointment_rows.append({
                 'id': a.id,
                 'user_id': a.user_id,
                 'doctor_id': a.doctor_id,
+                'doctor_name': doctor.name if doctor else 'Deleted doctor',
+                'doctor_specialty': doctor.specialty if doctor else '',
                 'hospital_name': a.hospital_name,
                 'appointment_date': a.appointment_date.isoformat(),
                 'appointment_time': a.appointment_time,
@@ -2509,7 +3261,10 @@ def get_all_appointments(current_user):
                 'deleted_at': a.deleted_at.isoformat() if a.deleted_at else None,
                 'deletion_reason': a.deletion_reason,
                 'created_at': a.created_at.isoformat()
-            } for a in appointments.items],
+            })
+
+        return jsonify({
+            'appointments': appointment_rows,
             'total': appointments.total,
             'pages': appointments.pages,
             'current_page': page
@@ -2517,7 +3272,7 @@ def get_all_appointments(current_user):
         
     except Exception as e:
         app.logger.error(f"Get appointments error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 @app.route('/api/admin/appointments/<int:appointment_id>', methods=['DELETE'])
@@ -2552,7 +3307,7 @@ def admin_delete_appointment(current_user, appointment_id):
     except Exception as e:
         app.logger.error(f"Delete appointment error: {str(e)}")
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 # Review Moderation
@@ -2594,7 +3349,7 @@ def get_all_reviews(current_user):
         
     except Exception as e:
         app.logger.error(f"Get reviews error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 @app.route('/api/admin/reviews/<int:review_id>/flag', methods=['PUT'])
@@ -2632,7 +3387,7 @@ def admin_flag_review(current_user, review_id):
     except Exception as e:
         app.logger.error(f"Flag review error: {str(e)}")
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 @app.route('/api/admin/reviews/<int:review_id>', methods=['DELETE'])
@@ -2663,7 +3418,7 @@ def admin_delete_review(current_user, review_id):
     except Exception as e:
         app.logger.error(f"Delete review error: {str(e)}")
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 # Admin Activity Logs
@@ -2715,7 +3470,7 @@ def get_admin_logs(current_user):
         
     except Exception as e:
         app.logger.error(f"Get logs error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 # System Logs
@@ -2754,7 +3509,7 @@ def get_system_logs(current_user):
         
     except Exception as e:
         app.logger.error(f"Get system logs error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 # Email Announcements
@@ -2857,7 +3612,7 @@ def create_announcement(current_user):
     except Exception as e:
         app.logger.error(f"Create announcement error: {str(e)}")
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 @app.route('/api/admin/announcements', methods=['GET'])
@@ -2891,19 +3646,19 @@ def get_announcements(current_user):
         
     except Exception as e:
         app.logger.error(f"Get announcements error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return safe_error_response('Unhandled request error', e)
 
 
 @app.route('/api/symptom-chat', methods=['POST'])
 @token_required
-def symptom_chat(current_user_id):
+def symptom_chat(current_user):
     """
     AI-powered symptom chat endpoint
     Uses Cohere AI for intelligent conversation
     Can suggest nearby hospitals if symptoms are severe
     """
     try:
-        data = request.json
+        data = request.json or {}
         user_message = data.get('message', '').strip()
         user_location = data.get('location')  # {latitude, longitude} or {lat, lng}
         chat_history = data.get('chat_history', [])
@@ -2915,47 +3670,31 @@ def symptom_chat(current_user_id):
         if not user_message:
             return jsonify({'error': 'Message is required'}), 400
         
-        # Call Google Gemini AI (Cohere models were all deprecated)
+        ai_provider = None
         try:
-            # Build conversation history for Gemini
-            conversation_text = ""
-            for msg in chat_history[-6:]:  # Last 6 messages for context
-                if msg.get('role') == 'user':
-                    conversation_text += f"User: {msg.get('content')}\n"
-                elif msg.get('role') == 'assistant':
-                    conversation_text += f"Assistant: {msg.get('content')}\n"
-            
-            # System instruction + conversation context
-            full_prompt = """You are an AI Health Assistant. Your role is to:
-1. Listen to the user's symptoms carefully
-2. Ask clarifying questions if needed
-3. Provide general health advice (NOT a diagnosis)
-4. If symptoms are severe/emergency, recommend seeking immediate medical attention
-5. Be empathetic and supportive
-6. Always remind users this is not a substitute for professional medical advice
+            ai_response = generate_health_response_with_nvidia(user_message, chat_history)
+            ai_provider = 'nvidia_nim'
+        except Exception as nvidia_error:
+            app.logger.error(f"NVIDIA NIM API error: {str(nvidia_error)}")
+            if app.config.get('AI_USE_GEMINI_FALLBACK'):
+                try:
+                    ai_response = generate_health_response_with_gemini(user_message, chat_history)
+                    ai_provider = 'gemini'
+                except Exception as gemini_error:
+                    app.logger.error(f"Gemini API error: {str(gemini_error)}")
+                    ai_response = None
+            else:
+                ai_response = None
 
-Important: Only mention emergency services or hospitals if the symptoms described are genuinely severe or life-threatening.
+            if not ai_response and app.config.get('AI_LOCAL_FALLBACK_ENABLED'):
+                ai_response = generate_local_health_response(user_message)
+                ai_provider = 'local_fallback'
 
-IMPORTANT: Use plain text only. Do NOT use markdown formatting, asterisks, or special characters for emphasis. Write in simple, clear sentences.
-
-"""
-            if conversation_text:
-                full_prompt += f"Previous conversation:\n{conversation_text}\n"
-            
-            full_prompt += f"User: {user_message}\nAssistant:"
-            
-            # Use Gemini AI (using latest flash model)
-            model = genai.GenerativeModel('gemini-flash-latest')
-            response = model.generate_content(full_prompt)
-            ai_response = response.text.strip()
-            
-            # Remove markdown asterisks for better readability
-            ai_response = ai_response.replace('**', '').replace('*', '')
-            
-        except Exception as e:
-            app.logger.error(f"Gemini API error: {str(e)}")
-            # Fallback response
-            ai_response = "I'm having trouble connecting to my AI service right now. However, if you're experiencing severe symptoms like chest pain, difficulty breathing, severe bleeding, or loss of consciousness, please call emergency services (108 in India, 911 in US) immediately or visit the nearest emergency room."
+        if not ai_response:
+            return jsonify({
+                'error': 'AI assistant is temporarily unavailable. Please try again in a moment.',
+                'provider': 'unavailable'
+            }), 503
         
         # Analyze if symptoms are severe and user has location
         # Only check user's message for severity, not AI response
@@ -2976,12 +3715,12 @@ IMPORTANT: Use plain text only. Do NOT use markdown formatting, asterisks, or sp
                 app.logger.info(f"Severe symptom detected: '{keyword}' in message")
                 break
         
-        result = {'response': ai_response}
+        result = {'response': ai_response, 'provider': ai_provider}
         
         # If severe symptoms detected but NO location, prompt user to share location
         if suggest_hospitals and not user_location:
             app.logger.warning("Severe symptom but NO location provided")
-            ai_response += "\n\n🏥 To find nearby hospitals for you, please click the 'Share Location' button at the top of the chat."
+            ai_response += "\n\nTo find nearby hospitals for you, please click the 'Share Location' button at the top of the chat."
             result['response'] = ai_response
         
         # If severe and location available, find nearby hospitals
@@ -3037,7 +3776,7 @@ IMPORTANT: Use plain text only. Do NOT use markdown formatting, asterisks, or sp
                         
                         if hospitals:
                             result['suggested_hospitals'] = hospitals
-                            ai_response += "\n\n⚠️ Based on your symptoms, I've found some nearby hospitals. Please consider seeking immediate medical attention."
+                            ai_response += "\n\nBased on your symptoms, I've found some nearby hospitals. Please consider seeking immediate medical attention."
                             result['response'] = ai_response
                             
             except Exception as e:
@@ -3046,10 +3785,8 @@ IMPORTANT: Use plain text only. Do NOT use markdown formatting, asterisks, or sp
         # Log the interaction
         try:
             search = SearchHistory(
-                user_id=current_user_id,
-                query=user_message[:200],
-                location='AI Chat Session',
-                timestamp=datetime.utcnow()
+                user_id=current_user.id,
+                location=f'AI Chat: {user_message[:190]}',
             )
             db.session.add(search)
             db.session.commit()
@@ -3070,7 +3807,9 @@ if __name__ == '__main__':
         print(f"  {rule.endpoint}: {rule.rule}")
     # Ensure tables exist
     with app.app_context():
-        db.create_all()
+        maintenance_result = run_db_maintenance()
+        if not maintenance_result['ok']:
+            print(f"Database maintenance warnings: {maintenance_result}")
         # Create default admin if not exists
         admin = User.query.filter_by(email='admin@nearbycare.com').first()
         if not admin:
@@ -3091,8 +3830,8 @@ if __name__ == '__main__':
             print("   Password: admin123")
             print("   ⚠️  Change this password immediately!\n")
         
-        # Seed sample doctors if table is empty
-        if Doctor.query.count() == 0:
+        # Seed sample doctors once per database lifetime.
+        if should_seed_sample_doctors():
             print("\n👨‍⚕️ Seeding sample doctors...")
             sample_doctors = [
                 # Cardiology
@@ -3176,6 +3915,7 @@ if __name__ == '__main__':
             ]
             
             db.session.add_all(sample_doctors)
+            mark_sample_doctors_seeded()
             db.session.commit()
             print(f"✅ Added {len(sample_doctors)} sample doctors!\n")
         

@@ -117,7 +117,7 @@ function SearchForm({ onSearch, loading }) {
             className="btn-link"
             onClick={() => setShowAdvanced(!showAdvanced)}
           >
-            {showAdvanced ? '▼' : '▶'} Advanced Filters
+            {showAdvanced ? 'Hide' : 'Show'} Advanced Filters
           </button>
         </div>
 

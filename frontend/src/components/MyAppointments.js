@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { API_URL } from '../config';
+import { apiDelete, apiGet } from '../utils/apiClient';
+import { Alert, EmptyState, Spinner } from './ui';
 
 function MyAppointments() {
   const [appointments, setAppointments] = useState([]);
@@ -13,21 +14,14 @@ function MyAppointments() {
 
   const fetchAppointments = async () => {
     setLoading(true);
-    const token = localStorage.getItem('token');
+    setError(null);
     
     try {
-      const response = await fetch(`${API_URL}/api/appointments`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setAppointments(data.appointments || []);
-      } else {
-        setError('Failed to load appointments');
-      }
+      const data = await apiGet('/api/appointments');
+      setAppointments(data.appointments || []);
     } catch (err) {
-      setError('Network error');
+      setError(err.message || 'Failed to load appointments');
+      setAppointments([]);
     } finally {
       setLoading(false);
     }
@@ -38,21 +32,11 @@ function MyAppointments() {
       return;
     }
 
-    const token = localStorage.getItem('token');
-    
     try {
-      const response = await fetch(`${API_URL}/api/appointments/${appointmentId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      if (response.ok) {
-        fetchAppointments(); // Refresh list
-      } else {
-        alert('Failed to cancel appointment');
-      }
+      await apiDelete(`/api/appointments/${appointmentId}`);
+      fetchAppointments(); // Refresh list
     } catch (err) {
-      alert('Network error');
+      setError(err.message || 'Failed to cancel appointment');
     }
   };
 
@@ -89,11 +73,11 @@ function MyAppointments() {
   const cancelledCount = appointments.filter(a => a.status === 'cancelled').length;
 
   if (loading) {
-    return <div className="loading">Loading appointments...</div>;
+    return <Spinner label="Loading appointments..." />;
   }
 
   if (error) {
-    return <div className="error">{error}</div>;
+    return <Alert type="error">{error}</Alert>;
   }
 
   return (
@@ -141,10 +125,10 @@ function MyAppointments() {
       </div>
 
       {filteredAppointments.length === 0 ? (
-        <div className="no-appointments">
-          <p>No {filter !== 'all' ? filter : ''} appointments found.</p>
-          <p>Book your first appointment from the search results!</p>
-        </div>
+        <EmptyState
+          title={`No ${filter !== 'all' ? filter : ''} appointments found.`}
+          description="Book your first appointment from a doctor or hospital details screen."
+        />
       ) : (
         <div className="appointments-list">
           {filteredAppointments.map(appointment => (

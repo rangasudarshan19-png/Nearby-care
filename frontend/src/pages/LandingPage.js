@@ -8,7 +8,7 @@ function LandingPage() {
   return (
     <div className="landing-page">
       {/* Hero Section */}
-      <header className="hero-section">
+      <header className="hero-section" style={{'--hero-bg': 'url(/images/hero-hospital.png)'}}>
         <nav className="navbar">
           <div className="nav-brand">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -24,13 +24,13 @@ function LandingPage() {
         </nav>
 
         <div className="hero-content">
-          <h1 className="hero-title">Your Health, Our Priority — Find Care Instantly</h1>
+          <h1 className="hero-title">Find Nearby Care With Confidence</h1>
           <p className="hero-subtitle">
-            Discover hospitals, compare doctors, book appointments, and get AI-powered health guidance — all in one platform.
+            Search hospitals, compare doctors, book appointments, and get AI-powered health guidance in one focused workspace.
           </p>
           <div className="hero-buttons">
             <button onClick={() => navigate('/signup')} className="btn-hero-primary">
-              Get Started — It's Free
+              Get Started
             </button>
             <button onClick={() => navigate('/login')} className="btn-hero-secondary">
               Sign In
@@ -130,13 +130,13 @@ function LandingPage() {
             <h3>Sign Up</h3>
             <p>Create your free account with email verification</p>
           </div>
-          <div className="step-arrow">→</div>
+          <div className="step-arrow" aria-hidden="true"></div>
           <div className="step">
             <div className="step-number">2</div>
             <h3>Search Location</h3>
             <p>Enter any city, area, or address you want to search</p>
           </div>
-          <div className="step-arrow">→</div>
+          <div className="step-arrow" aria-hidden="true"></div>
           <div className="step">
             <div className="step-number">3</div>
             <h3>Find Hospitals</h3>
@@ -190,12 +190,7 @@ function LandingPage() {
             </ul>
           </div>
           <div className="benefits-visual">
-            <div className="visual-icon">
-              <svg width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"></path>
-              </svg>
-            </div>
-            <p className="visual-text">Trusted by thousands of users</p>
+            <img src="/images/doctor-portrait.png" alt="Trusted healthcare professional" style={{width: '100%', height: '420px', objectFit: 'cover', borderRadius: '24px'}} />
           </div>
         </div>
       </section>
@@ -218,7 +213,7 @@ function LandingPage() {
               <polyline points="9 22 9 12 15 12 15 22"></polyline>
             </svg>
             <h3>Nearby Care</h3>
-            <p>Your trusted healthcare companion — find, compare, and book with confidence.</p>
+            <p>Your trusted healthcare companion for finding, comparing, and booking care.</p>
           </div>
           <div className="footer-links">
             <div className="footer-column">
